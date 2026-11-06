@@ -7,3 +7,6 @@ coverage/
 var/
 __pycache__/
 *.pyc
+
+.lock.NEAR_BUILD_EXECUTION.md#
+NEAR_BUILD_EXECUTION.md
