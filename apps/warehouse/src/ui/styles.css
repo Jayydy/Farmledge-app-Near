@@ -1,0 +1,678 @@
+/*
+ * Built for a dusty warehouse in bright sunlight, standing at arm's length,
+ * and a projector: one light, high-contrast theme (no dark mode: it washes
+ * out in sun), large type, touch targets of at least 72 px, and a status bar
+ * that is always on screen.
+ */
+:root {
+  --ink: #111111;
+  --ink-soft: #3a3a3a;
+  --paper: #ffffff;
+  --panel: #f2f2ee;
+  --line: #1a1a1a;
+  --primary: #0b5d1e;
+  --primary-ink: #ffffff;
+  --ok: #0b5d1e;
+  --ok-bg: #dff3e3;
+  --warn: #7a4a00;
+  --warn-bg: #ffe7b3;
+  --bad: #a3000b;
+  --bad-bg: #ffd9db;
+  --focus: #1546d1;
+  --radius: 14px;
+  --gutter: clamp(16px, 3vw, 32px);
+  --touch: 76px;
+  --type: clamp(20px, 2.2vw, 26px);
+  --type-large: clamp(28px, 3.4vw, 40px);
+  --type-huge: clamp(40px, 6vw, 72px);
+  color-scheme: light;
+  font-family:
+    'Atkinson Hyperlegible',
+    'Noto Sans',
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  font-size: var(--type);
+  line-height: 1.35;
+  color: var(--ink);
+  background: var(--paper);
+  -webkit-text-size-adjust: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  height: 100%;
+}
+
+body {
+  background: var(--paper);
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+input {
+  user-select: text;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 4px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.app {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  height: 100%;
+}
+
+/* ---- Header and status bar (always visible) ------------------------------ */
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px var(--gutter);
+  background: var(--ink);
+  color: var(--paper);
+  min-height: 72px;
+}
+
+.header__brand {
+  font-weight: 800;
+  font-size: var(--type-large);
+  letter-spacing: 0.01em;
+}
+
+.header__who {
+  margin-left: auto;
+  text-align: right;
+  font-size: 0.85em;
+  line-height: 1.2;
+}
+
+.header__who small {
+  display: block;
+  opacity: 0.85;
+}
+
+.lang {
+  display: inline-flex;
+  border: 3px solid var(--paper);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.lang button {
+  min-height: 56px;
+  min-width: 76px;
+  padding: 0 14px;
+  border: 0;
+  background: transparent;
+  color: var(--paper);
+  font-weight: 700;
+}
+
+.lang button[aria-pressed='true'] {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.header__icon {
+  min-height: 56px;
+  min-width: 56px;
+  border: 3px solid var(--paper);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--paper);
+  font-weight: 700;
+  padding: 0 14px;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px var(--gutter);
+  font-weight: 800;
+  border-bottom: 4px solid var(--line);
+  min-height: 60px;
+}
+
+.status[data-tone='ok'] {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.status[data-tone='warn'] {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.status[data-tone='bad'] {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.status__dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.status__dot[data-pulse='true'] {
+  animation: pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  to {
+    opacity: 0.25;
+  }
+}
+
+.status__action {
+  margin-left: auto;
+  min-height: 48px;
+  padding: 0 18px;
+  border: 3px solid currentColor;
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: inherit;
+  font-weight: 800;
+}
+
+/* ---- Screens ----------------------------------------------------------------- */
+
+.app__body {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.screen {
+  min-width: 0;
+  padding: var(--gutter);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 960px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.screen__step {
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+
+.screen h1 {
+  font-size: var(--type-large);
+  margin: 0;
+  line-height: 1.15;
+}
+
+.hint {
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+.message {
+  border: 4px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  font-weight: 700;
+}
+
+.message[data-tone='bad'] {
+  border-color: var(--bad);
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.message[data-tone='warn'] {
+  border-color: var(--warn);
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.message[data-tone='ok'] {
+  border-color: var(--ok);
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.read-aloud {
+  font-size: var(--type-large);
+  font-weight: 700;
+  border-left: 10px solid var(--primary);
+  padding: 8px 0 8px 20px;
+  margin: 0;
+}
+
+/*
+ * Landscape tablets: the keypad goes on the right, so the question, any
+ * error and the buttons stay on screen together without scrolling.
+ */
+@media (orientation: landscape) and (min-width: 900px) {
+  .screen:has(> .keypad) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    column-gap: 40px;
+    align-content: start;
+    max-width: 1280px;
+  }
+
+  .screen:has(> .keypad) > * {
+    grid-column: 1;
+  }
+
+  .screen:has(> .keypad) > .keypad {
+    grid-column: 2;
+    grid-row: 1 / span 20;
+  }
+
+  .screen:has(> .keypad) > .actions {
+    margin-top: 0;
+  }
+}
+
+/* Phones (demos): the header wraps and drops the warehouse name. */
+@media (max-width: 600px) {
+  .header__brand {
+    font-size: var(--type);
+  }
+
+  .header__who small {
+    display: none;
+  }
+
+  .review__row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .review__row dd {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
+/* ---- Buttons ------------------------------------------------------------------- */
+
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: var(--touch);
+  width: 100%;
+  padding: 12px 24px;
+  border-radius: var(--radius);
+  border: 4px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: var(--type);
+  font-weight: 800;
+  text-align: center;
+  touch-action: manipulation;
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(2px);
+}
+
+.btn--primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-ink);
+}
+
+.btn--danger {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.btn--huge {
+  min-height: 140px;
+  font-size: var(--type-large);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+}
+
+.choices {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+}
+
+.choices .btn {
+  min-height: 120px;
+  font-size: var(--type-large);
+}
+
+.actions {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+/* ---- Keypad ---------------------------------------------------------------------- */
+
+.keypad {
+  display: grid;
+  gap: 14px;
+}
+
+.keypad__display {
+  min-height: 96px;
+  border: 4px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 20px;
+  font-size: var(--type-huge);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.keypad__display[data-empty='true'] {
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+
+.keypad__keys {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.keypad__key {
+  min-height: 84px;
+  border-radius: var(--radius);
+  border: 4px solid var(--line);
+  background: var(--panel);
+  font-size: var(--type-large);
+  font-weight: 800;
+  touch-action: manipulation;
+}
+
+.keypad__key:active {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.text-field {
+  min-height: var(--touch);
+  width: 100%;
+  border: 4px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 20px;
+  font-size: var(--type-large);
+  font-weight: 700;
+}
+
+/* A labelled text field: the label above, the field full width. */
+.field {
+  display: grid;
+  gap: 8px;
+  font-weight: 700;
+}
+
+/* ---- Lists, review, photos --------------------------------------------------------- */
+
+.review {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.review__row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) 2fr auto;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 2px solid var(--panel);
+  padding: 8px 0;
+}
+
+.review__row dt {
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.review__row dd {
+  margin: 0;
+  font-size: var(--type-large);
+  font-weight: 800;
+}
+
+.review__row .btn {
+  min-height: 60px;
+  width: auto;
+  padding: 0 18px;
+}
+
+.photos {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+.photo {
+  border: 4px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: grid;
+}
+
+.photo img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.photo .btn {
+  border: 0;
+  border-top: 4px solid var(--line);
+  border-radius: 0;
+  min-height: 60px;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.card {
+  border: 4px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  display: grid;
+  gap: 8px;
+}
+
+.card[data-tone='bad'] {
+  border-color: var(--bad);
+}
+
+.card__title {
+  font-weight: 800;
+  font-size: var(--type-large);
+}
+
+.card__line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.tag {
+  font-weight: 800;
+  padding: 2px 12px;
+  border-radius: 999px;
+  border: 3px solid currentColor;
+}
+
+.tag[data-tone='ok'] {
+  color: var(--ok);
+}
+
+.tag[data-tone='warn'] {
+  color: var(--warn);
+}
+
+.tag[data-tone='bad'] {
+  color: var(--bad);
+}
+
+.done-mark {
+  font-size: 120px;
+  line-height: 1;
+  color: var(--ok);
+  text-align: center;
+}
+
+.reference {
+  font-size: var(--type-huge);
+  font-weight: 800;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.qr {
+  display: flex;
+  justify-content: center;
+}
+
+.qr svg {
+  width: min(320px, 70vw);
+  height: auto;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px var(--gutter);
+  background: var(--panel);
+  border-bottom: 4px solid var(--line);
+  font-weight: 700;
+}
+
+.banner .btn {
+  width: auto;
+  min-height: 56px;
+  margin-left: auto;
+}
+
+/* ---- The slip: hidden on screen, the only thing printed ------------------------------- */
+
+.slip {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 3mm;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .slip,
+  .slip * {
+    visibility: visible;
+  }
+
+  .slip {
+    display: block;
+    position: absolute;
+    inset: 0 auto auto 0;
+    /* One column that fits a 58 mm roll (48 mm printable); 80 mm rolls just get margins. */
+    width: 100%;
+    max-width: 72mm;
+    font-family: system-ui, sans-serif;
+    font-size: 9pt;
+    line-height: 1.3;
+    color: #000;
+  }
+
+  .slip h2 {
+    font-size: 11pt;
+    margin: 0 0 1mm;
+    text-align: center;
+  }
+
+  .slip__note {
+    border: 0.4mm solid #000;
+    padding: 1.5mm;
+    margin: 2mm 0;
+    font-weight: 700;
+  }
+
+  .slip dl {
+    margin: 0;
+  }
+
+  .slip__row {
+    display: flex;
+    justify-content: space-between;
+    gap: 2mm;
+    border-bottom: 0.2mm dashed #000;
+    padding: 0.8mm 0;
+  }
+
+  .slip__row dt {
+    font-weight: 400;
+  }
+
+  .slip__row dd {
+    margin: 0;
+    font-weight: 700;
+    text-align: right;
+  }
+
+  .slip__ref {
+    font-size: 14pt;
+    font-weight: 800;
+    text-align: center;
+    margin: 2mm 0;
+  }
+
+  .slip__qr svg {
+    display: block;
+    width: 100%;
+    max-width: 48mm;
+    height: auto;
+    margin: 2mm auto;
+  }
+}

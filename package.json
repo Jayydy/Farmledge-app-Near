@@ -1,0 +1,59 @@
+{
+  "name": "farmledge-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Farmledge backend: warehouse tablet API, lender portal API and supporting jobs.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=.env src/main.ts | pino-pretty",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node --env-file-if-exists=.env dist/main.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "migrate": "tsx --env-file-if-exists=.env src/cli/migrate.ts up",
+    "migrate:down": "tsx --env-file-if-exists=.env src/cli/migrate.ts down",
+    "accrue-fees": "tsx --env-file-if-exists=.env src/cli/accrueFees.ts",
+    "create-admin": "tsx --env-file-if-exists=.env src/cli/createAdmin.ts",
+    "set-pin": "tsx --env-file-if-exists=.env src/cli/setPin.ts",
+    "chain": "tsx --env-file-if-exists=.env src/cli/chain.ts"
+  },
+  "dependencies": {
+    "@near-js/jsonrpc-client": "1.9.0",
+    "@stellar/stellar-sdk": "17.2.1",
+    "borsh": "2.0.0",
+    "bs58": "6.0.0",
+    "express": "5.2.1",
+    "near-api-js": "7.4.0",
+    "node-pg-migrate": "9.0.0",
+    "pg": "8.23.0",
+    "pino": "10.3.1",
+    "pino-http": "11.0.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/express": "5.0.6",
+    "@types/node": "24.13.6",
+    "@types/pg": "8.23.1",
+    "@types/supertest": "7.2.1",
+    "eslint": "10.11.0",
+    "eslint-config-prettier": "10.1.8",
+    "globals": "17.12.0",
+    "pino-pretty": "13.1.3",
+    "prettier": "3.9.9",
+    "supertest": "7.3.0",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.1",
+    "vitest": "5.0.1"
+  }
+}

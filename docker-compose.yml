@@ -1,0 +1,36 @@
+# Local development only. `docker compose up` starts Postgres and then runs
+# migrations once against it. Requires a .env file (cp .env.example .env).
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: farmledge
+      POSTGRES_PASSWORD: farmledge
+      POSTGRES_DB: farmledge
+    # Host port 5433 so it doesn't collide with a Postgres already installed on 5432.
+    ports:
+      - '5433:5432'
+    volumes:
+      # The postgres:18 image keeps its data under /var/lib/postgresql/18/docker.
+      - farmledge_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U farmledge -d farmledge']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  migrate:
+    build: .
+    command: ['node', 'dist/cli/migrate.js', 'up']
+    env_file: .env
+    environment:
+      # Inside the compose network Postgres is `postgres:5432`, not localhost:5433.
+      DATABASE_URL: postgresql://farmledge:farmledge@postgres:5432/farmledge
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+volumes:
+  farmledge_postgres_data:
