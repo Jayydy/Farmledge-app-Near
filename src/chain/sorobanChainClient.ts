@@ -25,6 +25,7 @@ import {
   ContractCallError,
   DeadlineError,
   EVENT_TOPICS,
+  LenderAuthError,
   type AnchorCall,
   type AnchorHead,
   type ChainClient,
@@ -784,12 +785,7 @@ export function verifyLenderEntry(
   if (!valid) throw new LenderAuthError('the authorisation is not signed by the lender');
 }
 
-export class LenderAuthError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'LenderAuthError';
-  }
-}
+export { LenderAuthError };
 
 function decodeReceipt(value: xdr.ScVal): ReceiptState {
   const r = scValToNative(value) as {

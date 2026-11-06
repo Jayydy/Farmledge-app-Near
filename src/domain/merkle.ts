@@ -1,18 +1,22 @@
 import { createHash } from 'node:crypto';
 
-import { Address, xdr } from '@stellar/stellar-sdk';
+import { nearEntryBytes } from '../chain/nearLeaf.js';
+import { leafScVal, stellarEntryBytes } from '../chain/stellarLeaf.js';
+
+export { leafScVal };
 
 /**
- * The daily book's Merkle tree, exactly as docs/events.md ("Farmer proofs")
- * and the contract define it:
+ * The daily book's Merkle tree, as docs/events.md ("Farmer proofs") and the
+ * receipt contract define it:
  *
- *   leaf hash = sha256(0x00 ‖ XDR(leaf as ScVal map, keys sorted))
+ *   leaf hash = sha256(0x00 ‖ encode(leaf))
  *   node      = sha256(0x01 ‖ left ‖ right)
  *   padding   = sha256(0x00), up to a power of two
  *   head      = sha256(prev_head ‖ day ‖ leaves ‖ root), day and leaves u32 big-endian
  *
- * Pure: no I/O. Cross-checked against farmledge-protocol's scripts/verify_proof.py and the
- * contract's own `leaf_hash` in the tests.
+ * Pure: no I/O. Cross-checked against farmledge-protocol's scripts/verify_proof.py,
+ * farmledge-protocol-near's test-vectors/leaf_hash.json, and the contract's own
+ * `leaf_hash` in the tests.
  */
 
 export type WeightSourceName = 'Scale' | 'BagEstimate';
@@ -76,93 +80,6 @@ export type BookEntryJson = LeafJson | BookRecordJson;
 
 export const isLeaf = (entry: BookEntryJson): entry is LeafJson => !('record' in entry);
 
-type FieldType = 'u32' | 'u64' | 'i64' | 'symbol' | 'string' | 'address' | 'bytes';
-
-const LEAF_FIELDS: Record<Exclude<keyof LeafJson, 'weight_source'>, FieldType> = {
-  version: 'u32',
-  kind: 'u32',
-  warehouse_id: 'symbol',
-  day: 'u32',
-  index: 'u32',
-  deposit_no: 'u64',
-  deposit_id: 'string',
-  receipt_id: 'u64',
-  receipt_version: 'u32',
-  owner: 'address',
-  commodity: 'symbol',
-  grade: 'symbol',
-  kg: 'u64',
-  bags: 'u32',
-  moisture_bps: 'u32',
-  custodian: 'address',
-  verifier: 'address',
-  deposited_at: 'u64',
-  at: 'u64',
-  salt: 'bytes',
-};
-
-const RECORD_FIELDS: Record<keyof BookRecordJson, FieldType> = {
-  record: 'symbol',
-  version: 'u32',
-  warehouse_id: 'symbol',
-  day: 'u32',
-  index: 'u32',
-  deposit_no: 'u64',
-  deposit_id: 'string',
-  source_id: 'string',
-  reason: 'symbol',
-  owner: 'address',
-  bags_delta: 'i64',
-  kg_delta: 'i64',
-  at: 'u64',
-  salt: 'bytes',
-};
-
-function scVal(type: FieldType, value: unknown): xdr.ScVal {
-  switch (type) {
-    case 'u32':
-      return xdr.ScVal.scvU32(Number(value));
-    case 'u64':
-      return xdr.ScVal.scvU64(BigInt(value as number));
-    case 'i64':
-      return xdr.ScVal.scvI64(BigInt(value as number));
-    case 'symbol':
-      return xdr.ScVal.scvSymbol(String(value));
-    case 'string':
-      return xdr.ScVal.scvString(String(value));
-    case 'address':
-      return Address.fromString(String(value)).toScVal();
-    case 'bytes':
-      return xdr.ScVal.scvBytes(Buffer.from(String(value), 'hex'));
-  }
-}
-
-/** A map keyed by symbols in sorted order, as the host requires. */
-function sortedMap(entries: [string, xdr.ScVal][]): xdr.ScVal {
-  entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return xdr.ScVal.scvMap(
-    entries.map(([key, val]) => new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(key), val })),
-  );
-}
-
-/** The leaf as the contract's `Leaf` ScVal (what `leaf_hash` and `mint_from_anchor` take). */
-export function leafScVal(leaf: LeafJson): xdr.ScVal {
-  const entries = (Object.keys(LEAF_FIELDS) as (keyof typeof LEAF_FIELDS)[]).map(
-    (key): [string, xdr.ScVal] => [key, scVal(LEAF_FIELDS[key], leaf[key])],
-  );
-  entries.push(['weight_source', xdr.ScVal.scvVec([xdr.ScVal.scvSymbol(leaf.weight_source)])]);
-  return sortedMap(entries);
-}
-
-function recordScVal(record: BookRecordJson): xdr.ScVal {
-  return sortedMap(
-    (Object.keys(RECORD_FIELDS) as (keyof BookRecordJson)[]).map((key): [string, xdr.ScVal] => [
-      key,
-      scVal(RECORD_FIELDS[key], record[key]),
-    ]),
-  );
-}
-
 export function sha256(...parts: Uint8Array[]): Buffer {
   const hash = createHash('sha256');
   for (const part of parts) hash.update(part);
@@ -174,9 +91,20 @@ const NODE_PREFIX = Buffer.from([0x01]);
 /** Fills a tree out to a power of two. */
 export const PADDING = sha256(LEAF_PREFIX);
 
-export function entryHash(entry: BookEntryJson): Buffer {
-  const val = isLeaf(entry) ? leafScVal(entry) : recordScVal(entry);
-  return sha256(LEAF_PREFIX, val.toXdr());
+export type EntryEncoder =
+  | 'stellar'
+  | 'near'
+  | ((entry: BookEntryJson) => Uint8Array);
+
+const STELLAR_G_RE = /^G[A-Z2-7]{55}$/;
+
+export function entryHash(entry: BookEntryJson, encoder?: EntryEncoder): Buffer {
+  if (typeof encoder === 'function') {
+    return sha256(LEAF_PREFIX, encoder(entry));
+  }
+  const backend = encoder ?? (STELLAR_G_RE.test(entry.owner) ? 'stellar' : 'near');
+  const bytes = backend === 'near' ? nearEntryBytes(entry) : stellarEntryBytes(entry);
+  return sha256(LEAF_PREFIX, bytes);
 }
 
 export function nodeHash(left: Uint8Array, right: Uint8Array): Buffer {
