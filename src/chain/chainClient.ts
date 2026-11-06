@@ -322,3 +322,11 @@ export class ContractCallError extends Error {
     this.name = 'ContractCallError';
   }
 }
+
+/** D31: the lender's authorisation or offer is missing, invalid, or for different terms. */
+export class LenderAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LenderAuthError';
+  }
+}
