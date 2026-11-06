@@ -4,7 +4,7 @@ import { parseEnv } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 import { ConfigError, loadConfig } from '../src/config/index.js';
-import { envSchema } from '../src/config/schema.js';
+import { envSchema, NEAR_ENV_KEYS, STELLAR_ENV_KEYS } from '../src/config/schema.js';
 import { validEnv } from './helpers/env.js';
 
 function problemsFor(overrides: Record<string, string | undefined>): string[] {
@@ -62,8 +62,18 @@ describe('loadConfig', () => {
     expect(Object.isFrozen(config.commodities.MAIZE_WHITE.moistureBps)).toBe(true);
   });
 
-  it.each(Object.keys(validEnv()))('rejects a missing %s', (key) => {
+  it.each(
+    Object.keys(validEnv()).filter(
+      (key) => key !== 'CHAIN_BACKEND' && !(NEAR_ENV_KEYS as readonly string[]).includes(key),
+    ),
+  )('rejects a missing %s', (key) => {
     expect(problemsFor({ [key]: undefined })).toContain(`${key} is required`);
+  });
+
+  it.each(NEAR_ENV_KEYS)('rejects a missing %s when CHAIN_BACKEND=near', (key) => {
+    expect(problemsFor({ CHAIN_BACKEND: 'near', [key]: undefined })).toContain(
+      `${key} is required`,
+    );
   });
 
   // Fixed-choice variables report a blank value as "must be one of …" instead.
@@ -72,6 +82,8 @@ describe('loadConfig', () => {
     'LOG_LEVEL',
     'LENDING_ENABLED',
     'CHAIN_ENABLED',
+    'CHAIN_BACKEND',
+    'NEAR_NETWORK',
     'CONFIRMATION_MODE',
     'WEIGHT_MODE',
     'RELEASE_AUTHORITY',
@@ -243,6 +255,83 @@ describe('loadConfig', () => {
 
   it('rejects an unknown LOG_LEVEL', () => {
     expect(problemsFor({ LOG_LEVEL: 'verbose' })).toHaveLength(1);
+  });
+
+  describe('CHAIN_BACKEND=near', () => {
+    it('defaults CHAIN_BACKEND to stellar when omitted', () => {
+      const config = loadConfig({ ...validEnv(), CHAIN_BACKEND: undefined });
+      expect(config.chain.backend).toBe('stellar');
+      expect(config.chain.contractId).toBe(
+        'CBW6TA5UJMXJY2VYPJV6WUVWNUP3PKZNPXFMC2CNVCWZDF3SKIT4UAIN',
+      );
+    });
+
+    it('builds NEAR chain config and skips STELLAR_* requirements when CHAIN_BACKEND=near', () => {
+      const omitStellar = Object.fromEntries(STELLAR_ENV_KEYS.map((key) => [key, undefined]));
+      const config = loadConfig({
+        ...validEnv(),
+        ...omitStellar,
+        CHAIN_BACKEND: 'near',
+      });
+      expect(config.chain).toEqual({
+        backend: 'near',
+        rpcUrl: 'https://rpc.testnet.near.org',
+        networkId: 'testnet',
+        networkPassphrase: 'testnet',
+        contractId: 'farmledge-receipt.team.testnet',
+        startLedger: 0,
+        indexerUrl: 'https://api.testnet.kitwallet.app',
+        operatorFundYocto: 100_000_000_000_000_000_000_000n,
+      });
+    });
+
+    it('skips NEAR_* requirements when CHAIN_BACKEND=stellar', () => {
+      const omitNear = Object.fromEntries(NEAR_ENV_KEYS.map((key) => [key, undefined]));
+      const config = loadConfig({
+        ...validEnv(),
+        ...omitNear,
+        CHAIN_BACKEND: 'stellar',
+      });
+      expect(config.chain.backend).toBe('stellar');
+    });
+
+    it('rejects NEAR_NETWORK=mainnet when FARMLEDGE_ENV is not live', () => {
+      expect(
+        problemsFor({
+          CHAIN_BACKEND: 'near',
+          FARMLEDGE_ENV: 'test',
+          NEAR_NETWORK: 'mainnet',
+        }),
+      ).toEqual(['NEAR_NETWORK must be testnet when FARMLEDGE_ENV is not live']);
+    });
+
+    it('rejects NEAR_NETWORK=testnet in live when CHAIN_ENABLED=true', () => {
+      expect(
+        problemsFor({
+          CHAIN_BACKEND: 'near',
+          FARMLEDGE_ENV: 'live',
+          CHAIN_ENABLED: 'true',
+          NEAR_NETWORK: 'testnet',
+          KEY_SERVICE_LOCAL_SECRET: 'x'.repeat(40),
+          AUTH_REQUIRED: 'true',
+        }),
+      ).toEqual(['NEAR_NETWORK must not be testnet in live']);
+    });
+
+    it('validates NEAR_CONTRACT_ID and NEAR_OPERATOR_FUND_YOCTO formats', () => {
+      expect(
+        problemsFor({
+          CHAIN_BACKEND: 'near',
+          NEAR_CONTRACT_ID: 'UPPERCASE.testnet',
+        }),
+      ).toEqual(['NEAR_CONTRACT_ID must be a valid NEAR account ID']);
+      expect(
+        problemsFor({
+          CHAIN_BACKEND: 'near',
+          NEAR_OPERATOR_FUND_YOCTO: '-100',
+        }),
+      ).toEqual(['NEAR_OPERATOR_FUND_YOCTO must be a non-negative integer in yoctoNEAR']);
+    });
   });
 });
 

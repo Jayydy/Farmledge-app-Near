@@ -5,6 +5,7 @@ export const COMMODITIES = ['MAIZE_WHITE', 'MAIZE_YELLOW'] as const;
 export type Commodity = (typeof COMMODITIES)[number];
 
 export type FarmledgeEnvironment = 'test' | 'live';
+export type ChainBackend = 'stellar' | 'near';
 
 export interface CommodityConfig {
   readonly bagSizeKg: number;
@@ -49,10 +50,19 @@ export interface AdapterConfig {
 
 /** The receipt contract this deployment talks to (data_version 3). */
 export interface ChainConfig {
+  readonly backend: ChainBackend;
   readonly rpcUrl: string;
+  /** Stellar network passphrase or NEAR network ('testnet' | 'mainnet'). */
+  readonly networkId: string;
+  /** Alias for `networkId` (retained for Stellar callers). */
   readonly networkPassphrase: string;
   readonly contractId: string;
+  /** start_ledger on Stellar; start_block on NEAR. */
   readonly startLedger: number;
+  /** KitWallet / FastNEAR indexer URL when backend === 'near'. */
+  readonly indexerUrl: string;
+  /** YoctoNEAR to fund new implicit accounts when backend === 'near'. */
+  readonly operatorFundYocto: bigint;
 }
 
 export interface Config {
@@ -116,15 +126,33 @@ export function loadConfig(source: NodeJS.ProcessEnv): Config {
     shrinkageToleranceBps: env.MAIZE_SHRINKAGE_TOLERANCE_BPS,
   };
 
+  const chain: ChainConfig =
+    env.CHAIN_BACKEND === 'near'
+      ? {
+          backend: 'near',
+          rpcUrl: env.NEAR_RPC_URL ?? '',
+          networkId: env.NEAR_NETWORK ?? 'testnet',
+          networkPassphrase: env.NEAR_NETWORK ?? 'testnet',
+          contractId: env.NEAR_CONTRACT_ID ?? '',
+          startLedger: env.NEAR_CONTRACT_START_BLOCK ?? 0,
+          indexerUrl: (env.NEAR_INDEXER_URL ?? '').replace(/\/+$/, ''),
+          operatorFundYocto: env.NEAR_OPERATOR_FUND_YOCTO ?? 0n,
+        }
+      : {
+          backend: 'stellar',
+          rpcUrl: env.STELLAR_RPC_URL ?? '',
+          networkId: env.STELLAR_NETWORK_PASSPHRASE ?? '',
+          networkPassphrase: env.STELLAR_NETWORK_PASSPHRASE ?? '',
+          contractId: env.RECEIPT_CONTRACT_ID ?? '',
+          startLedger: env.RECEIPT_CONTRACT_START_LEDGER ?? 1,
+          indexerUrl: (env.NEAR_INDEXER_URL ?? '').replace(/\/+$/, ''),
+          operatorFundYocto: env.NEAR_OPERATOR_FUND_YOCTO ?? 0n,
+        };
+
   return deepFreeze({
     environment: env.FARMLEDGE_ENV,
     database: { url: env.DATABASE_URL },
-    chain: {
-      rpcUrl: env.STELLAR_RPC_URL,
-      networkPassphrase: env.STELLAR_NETWORK_PASSPHRASE,
-      contractId: env.RECEIPT_CONTRACT_ID,
-      startLedger: env.RECEIPT_CONTRACT_START_LEDGER,
-    },
+    chain,
     proofs: { linkBaseUrl: env.PROOF_LINK_BASE_URL.replace(/\/+$/, '') },
     archive: { backupDir: env.ARCHIVE_BACKUP_DIR },
     server: { port: env.PORT, shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS },
