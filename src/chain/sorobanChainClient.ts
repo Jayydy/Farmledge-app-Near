@@ -24,12 +24,15 @@ import { leafScVal, type LeafJson } from '../domain/merkle.js';
 import {
   ContractCallError,
   DeadlineError,
+  EVENT_TOPICS,
   type AnchorCall,
   type AnchorHead,
   type ChainClient,
   type ChainEvent,
   type ChainTxOutcome,
   type ChainTxStatus,
+  type DecodedEvent,
+  type EventJson,
   type EventPage,
   type LockCall,
   type MintCall,
@@ -91,10 +94,13 @@ const contractErrorCode = (text: string): number | null => {
  * See ChainClient for the recording and signing rules this implements.
  */
 export class SorobanChainClient implements ChainClient {
+  readonly backend = 'stellar' as const;
   readonly enabled = true;
   readonly contractId: string;
+  readonly networkId: string;
   readonly networkPassphrase: string;
   readonly rpcUrl: string;
+  readonly capabilities = { ttl: true } as const;
   private readonly server: RpcServer;
   private readonly contract: Contract;
   /** One submission at a time from the operator account, so sequence numbers never collide. */
@@ -108,6 +114,7 @@ export class SorobanChainClient implements ChainClient {
     server?: RpcServer,
   ) {
     this.contractId = config.contractId;
+    this.networkId = config.networkPassphrase;
     this.networkPassphrase = config.networkPassphrase;
     this.rpcUrl = config.rpcUrl;
     this.server =
@@ -116,6 +123,10 @@ export class SorobanChainClient implements ChainClient {
         allowHttp: config.rpcUrl.startsWith('http://'),
       });
     this.contract = new Contract(config.contractId);
+  }
+
+  validateAccount(address: string): boolean {
+    return StrKey.isValidEd25519PublicKey(address);
   }
 
   async addressOf(subject: string): Promise<string> {
@@ -232,6 +243,8 @@ export class SorobanChainClient implements ChainClient {
     });
     const events = response.events.map((event): ChainEvent => {
       const suffix = event.id.split('-')[1] ?? '0';
+      const topicXdr = event.topic.map((topic) => topic.toXdr('base64'));
+      const valueXdr = event.value.toXdr('base64');
       return {
         id: event.id,
         contractId: event.contractId?.contractId() ?? this.contractId,
@@ -242,8 +255,10 @@ export class SorobanChainClient implements ChainClient {
         opIndex: event.operationIndex,
         eventIndex: Number(suffix),
         inSuccessfulContractCall: event.inSuccessfulContractCall,
-        topicXdr: event.topic.map((topic) => topic.toXdr('base64')),
-        valueXdr: event.value.toXdr('base64'),
+        topicXdr,
+        valueXdr,
+        decoded: decodeSorobanEvent(topicXdr, valueXdr),
+        raw: JSON.stringify({ topicXdr, valueXdr }),
       };
     });
     // endLedger is exclusive. A full page may stop inside a ledger, so only
@@ -325,6 +340,7 @@ export class SorobanChainClient implements ChainClient {
     // Handed out as simulation returned it; the lender's own authorizeEntry
     // sets the expiration to validUntilLedger when it signs.
     return {
+      kind: 'soroban_auth',
       lenderEntryXdr: entry.toXdr('base64'),
       validUntilLedger,
       payloadHashHex: createHash('sha256')
@@ -828,7 +844,42 @@ function outcomeOf(row: TxRow): ChainTxOutcome {
     contractError:
       row.status === 'failed' && row.error !== null ? contractErrorCode(row.error) : null,
     returnValueXdr: row.return_value_xdr,
+    returnValue: decodeSorobanReturnValue(row.return_value_xdr),
     ledger: row.ledger === null ? null : Number(row.ledger),
     error: row.error,
   };
+}
+
+/** A native ScVal value as JSON: u64 and i128 as decimal strings, bytes as hex. */
+function toEventJson(value: unknown): EventJson {
+  if (typeof value === 'bigint') return value.toString();
+  if (value === undefined || value === null) return null;
+  if (Buffer.isBuffer(value) || value instanceof Uint8Array)
+    return Buffer.from(value).toString('hex');
+  if (Array.isArray(value)) return value.map(toEventJson);
+  if (typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, toEventJson(v)]));
+  }
+  return value as EventJson;
+}
+
+export function decodeSorobanEvent(topicXdr: readonly string[], valueXdr: string): DecodedEvent {
+  const topics = topicXdr.map((t) => toEventJson(scValToNative(xdr.ScVal.fromXdr(t, 'base64'))));
+  const name = typeof topics[0] === 'string' ? topics[0] : JSON.stringify(topics[0]);
+  const data = toEventJson(scValToNative(xdr.ScVal.fromXdr(valueXdr, 'base64')));
+  const fields: Record<string, EventJson> =
+    typeof data === 'object' && data !== null && !Array.isArray(data) ? { ...data } : {};
+  (EVENT_TOPICS[name] ?? []).forEach((field, i) => {
+    fields[field] = topics[i + 1] ?? null;
+  });
+  return { name, fields, topics };
+}
+
+export function decodeSorobanReturnValue(returnValueXdr: string | null): unknown {
+  if (returnValueXdr === null) return null;
+  try {
+    return toEventJson(scValToNative(xdr.ScVal.fromXdr(returnValueXdr, 'base64')));
+  } catch {
+    return null;
+  }
 }

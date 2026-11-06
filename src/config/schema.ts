@@ -1,9 +1,9 @@
 import { z } from 'zod';
 
 /**
- * Environment variable schema. Every variable is required: there are no
- * defaults, so a missing or malformed value stops the process at startup
- * instead of silently running with a guess. `.env.example` lists them all.
+ * Environment variable schema. Every variable for the active chain backend is
+ * required: there are no silent guesses, so a missing or malformed value stops
+ * the process at startup. `.env.example` lists them all.
  */
 
 const required = (input: unknown) => (input === undefined ? 'is required' : 'must be a string');
@@ -34,6 +34,15 @@ const decimal = (min: number, max = Number.MAX_SAFE_INTEGER) =>
     .regex(/^-?\d+(\.\d+)?$/, 'must be a number')
     .transform(Number)
     .pipe(z.number().min(min, `must be at least ${min}`).max(max, `must be at most ${max}`));
+
+const yoctoNear = text()
+  .regex(/^\d+$/, 'must be a non-negative integer in yoctoNEAR')
+  .transform((value) => BigInt(value));
+
+const nearAccountId = text().regex(
+  /^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$/,
+  'must be a valid NEAR account ID',
+);
 
 const postgresUrl = text().refine((value) => {
   try {
@@ -81,6 +90,22 @@ const timeZone = text().refine((value) => {
 /** The value in .env.example; refused in live so a real deployment sets its own. */
 export const EXAMPLE_KEY_SECRET = 'local-dev-only-not-a-secret-change-me-0000';
 
+export const STELLAR_ENV_KEYS = [
+  'STELLAR_RPC_URL',
+  'STELLAR_NETWORK_PASSPHRASE',
+  'RECEIPT_CONTRACT_ID',
+  'RECEIPT_CONTRACT_START_LEDGER',
+] as const;
+
+export const NEAR_ENV_KEYS = [
+  'NEAR_NETWORK',
+  'NEAR_RPC_URL',
+  'NEAR_INDEXER_URL',
+  'NEAR_CONTRACT_ID',
+  'NEAR_CONTRACT_START_BLOCK',
+  'NEAR_OPERATOR_FUND_YOCTO',
+] as const;
+
 export const envSchema = z
   .object({
     /** Which dataset this process may touch. Must match the database's own record. */
@@ -127,6 +152,8 @@ export const envSchema = z
     // Feature flags and adapter choices for open decisions (docs/decisions.md).
     LENDING_ENABLED: flag(),
     CHAIN_ENABLED: flag(),
+    /** Which chain backend to use when CHAIN_ENABLED=true ('stellar' | 'near'). */
+    CHAIN_BACKEND: oneOf(['stellar', 'near']).default('stellar'),
     CONFIRMATION_MODE: oneOf(['tablet_only', 'sms_two_way']),
     WEIGHT_MODE: oneOf(['bag_estimate', 'scale_required']),
     /** Whose record decides a release when Farmledge can't confirm a dispatch (D56). */
@@ -143,13 +170,24 @@ export const envSchema = z
     STAFF_SESSION_TTL_HOURS: integer(1, 24 * 30),
     PRICING_PROVIDER: oneOf(['manual']),
 
-    // The receipt contract, data_version 3 (protocol deployments/<network>.json).
-    // With CHAIN_ENABLED=false they are validated but nothing connects.
-    STELLAR_RPC_URL: httpUrl,
-    STELLAR_NETWORK_PASSPHRASE: text(),
-    RECEIPT_CONTRACT_ID: text().regex(/^C[A-Z2-7]{55}$/, 'must be a C… contract address'),
+    // The receipt contract on Stellar, data_version 3 (protocol deployments/<network>.json).
+    // Required when CHAIN_BACKEND=stellar; skipped when CHAIN_BACKEND=near.
+    STELLAR_RPC_URL: httpUrl.optional(),
+    STELLAR_NETWORK_PASSPHRASE: text().optional(),
+    RECEIPT_CONTRACT_ID: text()
+      .regex(/^C[A-Z2-7]{55}$/, 'must be a C… contract address')
+      .optional(),
     /** The deployment's start_ledger: the indexer archives from here (docs/events.md). */
-    RECEIPT_CONTRACT_START_LEDGER: integer(1),
+    RECEIPT_CONTRACT_START_LEDGER: integer(1).optional(),
+
+    // The receipt contract on NEAR (Required when CHAIN_BACKEND=near; skipped when CHAIN_BACKEND=stellar).
+    NEAR_NETWORK: oneOf(['testnet', 'mainnet']).optional(),
+    NEAR_RPC_URL: httpUrl.optional(),
+    NEAR_INDEXER_URL: httpUrl.optional(),
+    NEAR_CONTRACT_ID: nearAccountId.optional(),
+    NEAR_CONTRACT_START_BLOCK: integer(0).optional(),
+    NEAR_OPERATOR_FUND_YOCTO: yoctoNear.optional(),
+
     /** Farmers' SMS links point here: the public bundle page, which checks proofs against the chain. */
     PROOF_LINK_BASE_URL: httpUrl,
     /** Where event-archive backups are written; mount off-site storage here. */
@@ -200,16 +238,54 @@ export const envSchema = z
         message: 'must be true in live',
       });
     }
-    if (
-      env.FARMLEDGE_ENV === 'live' &&
-      env.CHAIN_ENABLED &&
-      /Test SDF/.test(env.STELLAR_NETWORK_PASSPHRASE)
-    ) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['STELLAR_NETWORK_PASSPHRASE'],
-        message: 'must not be Testnet in live',
-      });
+    if (env.CHAIN_BACKEND === 'stellar') {
+      for (const key of STELLAR_ENV_KEYS) {
+        if (env[key] === undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [key],
+            message: 'is required',
+          });
+        }
+      }
+      if (
+        env.FARMLEDGE_ENV === 'live' &&
+        env.CHAIN_ENABLED &&
+        env.STELLAR_NETWORK_PASSPHRASE !== undefined &&
+        /Test SDF/.test(env.STELLAR_NETWORK_PASSPHRASE)
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['STELLAR_NETWORK_PASSPHRASE'],
+          message: 'must not be Testnet in live',
+        });
+      }
+    } else {
+      for (const key of NEAR_ENV_KEYS) {
+        if (env[key] === undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [key],
+            message: 'is required',
+          });
+        }
+      }
+      // Non-production FARMLEDGE_ENV must use NEAR_NETWORK=testnet.
+      if (env.FARMLEDGE_ENV !== 'live' && env.NEAR_NETWORK === 'mainnet') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['NEAR_NETWORK'],
+          message: 'must be testnet when FARMLEDGE_ENV is not live',
+        });
+      }
+      // Mirror the "Test SDF" guard in live when chain is enabled.
+      if (env.FARMLEDGE_ENV === 'live' && env.CHAIN_ENABLED && env.NEAR_NETWORK === 'testnet') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['NEAR_NETWORK'],
+          message: 'must not be testnet in live',
+        });
+      }
     }
     if (env.OFFLINE_REVIEW_AFTER_HOURS >= env.OFFLINE_REJECT_AFTER_HOURS) {
       ctx.addIssue({

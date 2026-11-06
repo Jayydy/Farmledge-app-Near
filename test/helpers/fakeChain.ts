@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 
 import type { Keypair } from '@stellar/stellar-sdk';
-import { Address, hash, nativeToScVal, xdr } from '@stellar/stellar-sdk';
+import { Address, hash, nativeToScVal, StrKey, xdr } from '@stellar/stellar-sdk';
 
 import { addressFor } from '../../src/chain/addresses.js';
 import {
@@ -19,7 +19,12 @@ import {
   type PreparedLock,
   type ReceiptState,
 } from '../../src/chain/chainClient.js';
-import { authPayloadHash, verifyLenderEntry } from '../../src/chain/sorobanChainClient.js';
+import {
+  authPayloadHash,
+  decodeSorobanEvent,
+  decodeSorobanReturnValue,
+  verifyLenderEntry,
+} from '../../src/chain/sorobanChainClient.js';
 import type { Queryable } from '../../src/db/pool.js';
 import { utcDay } from '../../src/domain/book.js';
 import { entryHash, foldProof, nextHead, depthFor, ZERO_HEAD } from '../../src/domain/merkle.js';
@@ -52,10 +57,13 @@ type FailMode =
  * contract.
  */
 export class FakeChain implements ChainClient {
+  readonly backend = 'stellar' as const;
   readonly enabled = true;
   readonly contractId = FAKE_CONTRACT;
+  readonly networkId = PASSPHRASE;
   readonly networkPassphrase = PASSPHRASE;
   readonly rpcUrl = 'https://rpc.fake.test';
+  readonly capabilities = { ttl: true } as const;
   ledger = 1_000_000;
   instanceGone = false;
   readonly heads = new Map<string, AnchorHead>();
@@ -86,6 +94,10 @@ export class FakeChain implements ChainClient {
 
   failNextCall(method: string, mode: FailMode): void {
     this.failNext = { method, mode };
+  }
+
+  validateAccount(address: string): boolean {
+    return StrKey.isValidEd25519PublicKey(address);
   }
 
   addressOf(subject: string): Promise<string> {
@@ -252,6 +264,7 @@ export class FakeChain implements ChainClient {
       throw new ContractCallError('lock', 36, 'Error(Contract, #36)');
     const entry = lenderEntry(call, this.contractId, this.ledger + 17_280);
     return Promise.resolve({
+      kind: 'soroban_auth',
       lenderEntryXdr: entry.toXdr('base64'),
       validUntilLedger: this.ledger + 17_280,
       payloadHashHex: authPayloadHash(entry, this.networkPassphrase).toString('hex'),
@@ -430,6 +443,7 @@ export class FakeChain implements ChainClient {
       status: 'success',
       contractError: null,
       returnValueXdr: returnValue,
+      returnValue: decodeSorobanReturnValue(returnValue),
       ledger: this.ledger,
       error: null,
     };
@@ -454,6 +468,7 @@ function outcome(row: {
     status: row.status,
     contractError: code === undefined ? null : Number(code),
     returnValueXdr: null,
+    returnValue: null,
     ledger: null,
     error: row.error ?? null,
   };
@@ -524,6 +539,8 @@ export function encodeEvent(
   const entries = Object.entries(data)
     .sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([key, val]) => new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(key), val }));
+  const topicXdr = [xdr.ScVal.scvSymbol(name), ...topics].map((t) => t.toXdr('base64'));
+  const valueXdr = xdr.ScVal.scvMap(entries).toXdr('base64');
   return {
     id: `${String(ledger).padStart(10, '0')}${txIndex}-${String(eventIndex).padStart(10, '0')}`,
     contractId: FAKE_CONTRACT,
@@ -534,8 +551,10 @@ export function encodeEvent(
     opIndex: 0,
     eventIndex,
     inSuccessfulContractCall: true,
-    topicXdr: [xdr.ScVal.scvSymbol(name), ...topics].map((t) => t.toXdr('base64')),
-    valueXdr: xdr.ScVal.scvMap(entries).toXdr('base64'),
+    topicXdr,
+    valueXdr,
+    decoded: decodeSorobanEvent(topicXdr, valueXdr),
+    raw: JSON.stringify({ topicXdr, valueXdr }),
   };
 }
 
