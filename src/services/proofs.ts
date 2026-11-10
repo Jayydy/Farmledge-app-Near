@@ -7,7 +7,7 @@ import type { Config } from '../config/index.js';
 import type { Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/transaction.js';
 import { cutoffOf, utcDay } from '../domain/book.js';
-import type { LeafJson } from '../domain/merkle.js';
+import { entryHash, foldProof, nextHead, type LeafJson } from '../domain/merkle.js';
 import { balanceStatementSms, proofReadySms } from '../domain/smsTemplates.js';
 import type { Logger } from '../logger.js';
 import type { SmsGateway } from '../sms/smsGateway.js';
@@ -33,6 +33,51 @@ export interface ProofBundle {
   day_leaves: number;
   prev_head: string;
   later_days: { day: number; leaves: number; root: string }[];
+}
+
+export function explorerUrlForBundle(bundle: ProofBundle): string {
+  const isNear = bundle.chain === 'near' || bundle.encoding === 'near_borsh';
+  if (isNear) {
+    const isTestnet =
+      bundle.contract_id.endsWith('.testnet') || bundle.rpc.toLowerCase().includes('testnet');
+    return isTestnet
+      ? `https://testnet.nearblocks.io/address/${bundle.contract_id}`
+      : `https://nearblocks.io/address/${bundle.contract_id}`;
+  }
+  const isTestnet = bundle.rpc.toLowerCase().includes('testnet');
+  return isTestnet
+    ? `https://stellar.expert/explorer/testnet/contract/${bundle.contract_id}`
+    : `https://stellar.expert/explorer/public/contract/${bundle.contract_id}`;
+}
+
+export function computeBundleProof(bundle: ProofBundle): {
+  encoder: 'near' | 'stellar';
+  leafHash: Buffer;
+  root: Buffer;
+  head: Buffer;
+} {
+  const encoder =
+    bundle.encoding === 'near_borsh' || bundle.chain === 'near' ? 'near' : 'stellar';
+  const leafHash = entryHash(bundle.leaf, encoder);
+  const root = foldProof(
+    leafHash,
+    bundle.leaf.index,
+    bundle.proof.map((p) => Buffer.from(p, 'hex')),
+  );
+  let head = nextHead(
+    Buffer.from(bundle.prev_head, 'hex'),
+    bundle.leaf.day,
+    bundle.day_leaves,
+    root,
+  );
+  for (const d of bundle.later_days) {
+    head = nextHead(head, d.day, d.leaves, Buffer.from(d.root, 'hex'));
+  }
+  return { encoder, leafHash, root, head };
+}
+
+export function verifyProofBundle(bundle: ProofBundle, chainHead: Buffer): boolean {
+  return computeBundleProof(bundle).head.equals(chainHead);
 }
 
 /**

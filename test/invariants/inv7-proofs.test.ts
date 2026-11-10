@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { cutoffOf } from '../../src/domain/book.js';
 import { entryHash, foldProof, nextHead } from '../../src/domain/merkle.js';
-import type { ProofBundle } from '../../src/services/proofs.js';
+import { verifyProofBundle, type ProofBundle } from '../../src/services/proofs.js';
 import { middayOf, startChainHarness, type ChainHarness } from '../helpers/chainHarness.js';
 import type { FakeChain } from '../helpers/fakeChain.js';
 import { anchoredLot, DAY } from './helpers.js';
@@ -67,7 +67,20 @@ describe.each(['stellar', 'near'] as const)('INV-7 every farmer gets their proof
       // Public, no login.
       const bundle = (await request(h.app).get(`/proofs/${token}`).expect(200)).body as ProofBundle;
       expect(bundle.contract_id).toBe(fake.contractId);
-      expect(verifies(bundle, fake.heads.get('KN_DAWANAU')?.head ?? Buffer.alloc(0))).toBe(true);
+      expect(bundle.chain).toBe(backend);
+      expect(bundle.encoding).toBe(backend === 'near' ? 'near_borsh' : 'soroban_xdr');
+      const chainHead = fake.heads.get('KN_DAWANAU')?.head ?? Buffer.alloc(0);
+      expect(verifies(bundle, chainHead)).toBe(true);
+      expect(verifyProofBundle(bundle, chainHead)).toBe(true);
+
+      const verifyHtml = await request(h.app).get(`/proofs/${token}/verify`).expect(200);
+      if (backend === 'near') {
+        expect(verifyHtml.text).toContain('nearblocks.io/address/');
+        expect(verifyHtml.text).toContain('near_borsh');
+      } else {
+        expect(verifyHtml.text).toContain('stellar.expert/explorer/');
+        expect(verifyHtml.text).toContain('soroban_xdr');
+      }
     }
     const receipts = await h.pool.query<{ status: string; provider_message_id: string }>(
       'SELECT status, provider_message_id FROM proof_deliveries',

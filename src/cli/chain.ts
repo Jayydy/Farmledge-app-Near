@@ -4,6 +4,8 @@ import type pg from 'pg';
 
 import { createAdapters } from '../adapters.js';
 import { addressFor, OPERATOR_SUBJECT, subjectOf } from '../chain/addresses.js';
+import type { ChainClient } from '../chain/chainClient.js';
+import { NearChainClient } from '../chain/nearChainClient.js';
 import { loadConfig, type Config } from '../config/index.js';
 import { assertDatabaseEnvironment } from '../db/environmentGuard.js';
 import { createPool } from '../db/pool.js';
@@ -57,7 +59,7 @@ async function main(): Promise<void> {
     }
     const adapters = createAdapters(config, pool, logger);
     if (job === 'setup') {
-      await setup(pool, adapters.keys, config, args.includes('--fund'));
+      await setup(pool, adapters.keys, config, args.includes('--fund'), adapters.chain);
       return;
     }
     if (!config.features.chainEnabled)
@@ -151,7 +153,7 @@ async function main(): Promise<void> {
         return;
       }
       case 'near:fund-subjects':
-        await setup(pool, adapters.keys, config, false);
+        await setup(pool, adapters.keys, config, true, chain);
         return;
       default:
         console.error(
@@ -170,6 +172,7 @@ async function setup(
   keys: KeyService,
   config: Config,
   fund: boolean,
+  chain?: ChainClient,
 ): Promise<void> {
   const backend = config.chain.backend;
   const operator = await addressFor(keys, OPERATOR_SUBJECT, backend);
@@ -178,6 +181,7 @@ async function setup(
   );
   const lines: string[] = [`operator (submits and pays): ${operator}`];
   const toFund = [operator];
+  const subjects = [OPERATOR_SUBJECT];
   for (const w of warehouses.rows) {
     lines.push(`add_warehouse ${warehouseSymbol(w.code)}`);
     const custodians = await pool.query<{ id: string; full_name: string }>(
@@ -185,29 +189,43 @@ async function setup(
       [w.id],
     );
     for (const c of custodians.rows) {
-      const address = await addressFor(keys, subjectOf.custodian(c.id), backend);
+      const subject = subjectOf.custodian(c.id);
+      const address = await addressFor(keys, subject, backend);
       lines.push(`  add_custodian ${warehouseSymbol(w.code)} ${address}   (${c.full_name})`);
       toFund.push(address);
+      subjects.push(subject);
     }
   }
   const verifiers = await pool.query<{ id: string; full_name: string }>(
     `SELECT id, full_name FROM verifiers WHERE status = 'active' ORDER BY created_at`,
   );
   for (const v of verifiers.rows) {
-    const address = await addressFor(keys, subjectOf.verifier(v.id), backend);
+    const subject = subjectOf.verifier(v.id);
+    const address = await addressFor(keys, subject, backend);
     lines.push(`add_verifier ${address}   (${v.full_name})`);
     toFund.push(address);
+    subjects.push(subject);
   }
   const farmers = await pool.query<{ id: string }>('SELECT id FROM farmers ORDER BY created_at');
   for (const f of farmers.rows) {
-    toFund.push(await addressFor(keys, subjectOf.farmer(f.id), backend));
+    const subject = subjectOf.farmer(f.id);
+    toFund.push(await addressFor(keys, subject, backend));
+    subjects.push(subject);
   }
   console.log(`Contract ${config.chain.contractId}\n${lines.join('\n')}`);
   if (fund) {
     if (backend === 'near') {
-      throw new Error(
-        '--fund is for Stellar Friendbot only; on NEAR implicit accounts are auto-funded from the operator',
-      );
+      if (!(chain instanceof NearChainClient)) {
+        throw new Error('NEAR subject funding requires CHAIN_ENABLED=true and NearChainClient');
+      }
+      for (const subject of subjects) {
+        if (subject === OPERATOR_SUBJECT) continue;
+        const res = await chain.fundSubject(subject);
+        console.log(
+          `near ${res.subject} (${res.accountId}): ${res.funded ? 'funded' : 'already funded / skipped'}`,
+        );
+      }
+      return;
     }
     if (!/Test SDF/.test(config.chain.networkPassphrase))
       throw new Error('--fund is for Testnet only');
@@ -244,12 +262,14 @@ async function reset(pool: pg.Pool, config: Config, logger: Logger): Promise<voi
   const contract = flag('contract');
   const startLedger = Number(flag('start-ledger'));
   if (contract === undefined || !Number.isSafeInteger(startLedger) || !args.includes('--confirm')) {
-    throw new Error('Usage: chain reset --contract=C… --start-ledger=N --confirm');
+    throw new Error('Usage: chain reset --contract=<id> --start-ledger=N --confirm');
   }
   if (config.chain.contractId !== contract || config.chain.startLedger !== startLedger) {
-    throw new Error(
-      'set RECEIPT_CONTRACT_ID and RECEIPT_CONTRACT_START_LEDGER to the new deployment first',
-    );
+    const vars =
+      config.chain.backend === 'near'
+        ? 'NEAR_CONTRACT_ID and NEAR_CONTRACT_START_BLOCK'
+        : 'RECEIPT_CONTRACT_ID and RECEIPT_CONTRACT_START_LEDGER';
+    throw new Error(`set ${vars} to the new deployment first`);
   }
   const adapters = createAdapters(config, pool, logger);
   if (!(await adapters.chain.instanceExists())) {

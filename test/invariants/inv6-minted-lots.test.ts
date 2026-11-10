@@ -12,20 +12,22 @@ import { anchoredLot, DAY, lotState, pledge, rawLotMovement, sqlError } from './
  * And D33: a minted or pledged lot cannot be adjusted or cancelled
  * off-chain (loss on pledged collateral is a lender matter).
  */
-describe('INV-6 / D33 a minted lot is governed on-chain', () => {
-  let h: ChainHarness;
-  let fake: FakeChain;
-  let lot: { depositId: string; depositNo: number };
-  beforeEach(async () => {
-    h = await startChainHarness({ start: middayOf(DAY) });
-    fake = h.chain as FakeChain;
-    lot = await anchoredLot(h);
-    expect((await pledge(h, lot.depositId)).status).toBe(201);
-    expect(await lotState(h, lot.depositId)).toMatchObject({
-      status: 'minted',
-      chain_receipt_id: '1',
+describe.each(['stellar', 'near'] as const)(
+  'INV-6 / D33 a minted lot is governed on-chain (%s)',
+  (backend) => {
+    let h: ChainHarness;
+    let fake: FakeChain;
+    let lot: { depositId: string; depositNo: number };
+    beforeEach(async () => {
+      h = await startChainHarness({ start: middayOf(DAY), backend });
+      fake = h.chain as FakeChain;
+      lot = await anchoredLot(h);
+      expect((await pledge(h, lot.depositId)).status).toBe(201);
+      expect(await lotState(h, lot.depositId)).toMatchObject({
+        status: 'minted',
+        chain_receipt_id: '1',
+      });
     });
-  });
   afterEach(async () => {
     await h.close();
   });
@@ -120,4 +122,5 @@ describe('INV-6 / D33 a minted lot is governed on-chain', () => {
     const findings = await h.reconciliation.checkMints();
     expect(findings.map((f) => f.check).sort()).toEqual(['balance_drift', 'forward_balance']);
   });
-});
+  },
+);

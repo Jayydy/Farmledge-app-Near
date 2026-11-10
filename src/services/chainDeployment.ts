@@ -52,9 +52,10 @@ export async function assertChainDeployment(db: Queryable, config: Config): Prom
     current.contract_id !== config.chain.contractId ||
     current.network_passphrase !== config.chain.networkId
   ) {
+    const envKey = config.chain.backend === 'near' ? 'NEAR_CONTRACT_ID' : 'RECEIPT_CONTRACT_ID';
     throw new ChainDeploymentError(
-      `this database is bound to contract ${current.contract_id} on "${current.network_passphrase}", ` +
-        `but RECEIPT_CONTRACT_ID is ${config.chain.contractId}; switch contracts with npm run chain-reset`,
+      `this database is bound to ${current.chain} contract ${current.contract_id} on "${current.network_passphrase}", ` +
+        `but ${envKey} is ${config.chain.contractId} (${config.chain.backend} on "${config.chain.networkId}"); switch contracts with npm run chain -- reset`,
     );
   }
 }

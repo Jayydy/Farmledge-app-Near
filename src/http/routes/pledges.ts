@@ -2,7 +2,11 @@ import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
 
 import type { PledgeService } from '../../services/pledges.js';
-import type { ProofService } from '../../services/proofs.js';
+import {
+  computeBundleProof,
+  explorerUrlForBundle,
+  type ProofService,
+} from '../../services/proofs.js';
 import { NotFoundError, NotImplementedError, ValidationError } from '../errors.js';
 import { checkShape, orThrow, uuid } from '../parse.js';
 import { uuidParam } from './params.js';
@@ -140,6 +144,47 @@ export function proofsRouter(proofs: ProofService): Router {
     res.json({
       later_days: await proofs.laterDays(req.params.warehouse, Number.isFinite(after) ? after : 0),
     });
+  });
+
+  router.get('/proofs/:token/verify', async (req, res) => {
+    const bundle = await proofs.byToken(req.params.token);
+    if (bundle === null) throw new NotFoundError('Proof not found');
+    const computed = computeBundleProof(bundle);
+    const explorerUrl = explorerUrlForBundle(bundle);
+    const chain = bundle.chain ?? computed.encoder;
+    const encoding =
+      bundle.encoding ?? (computed.encoder === 'near' ? 'near_borsh' : 'soroban_xdr');
+    const explorerName = chain === 'near' ? 'NearBlocks' : 'Stellar Expert';
+    if (req.query.format === 'json') {
+      res.json({
+        chain,
+        encoding,
+        contract_id: bundle.contract_id,
+        rpc: bundle.rpc,
+        explorer_url: explorerUrl,
+        leaf_hash: computed.leafHash.toString('hex'),
+        root: computed.root.toString('hex'),
+        head: computed.head.toString('hex'),
+      });
+      return;
+    }
+    res
+      .type('html')
+      .send(
+        `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Farmledge Proof Verification</title></head><body>` +
+          `<h1>Farmledge Proof Bundle (${chain.toUpperCase()})</h1>` +
+          `<p>Contract: <a href="${explorerUrl}" target="_blank" rel="noopener noreferrer">${bundle.contract_id} (${explorerName})</a></p>` +
+          `<dl>` +
+          `<dt>Chain</dt><dd>${chain}</dd>` +
+          `<dt>Leaf Encoding</dt><dd>${encoding}</dd>` +
+          `<dt>Warehouse</dt><dd>${bundle.leaf.warehouse_id}</dd>` +
+          `<dt>Day</dt><dd>${bundle.leaf.day}</dd>` +
+          `<dt>Leaf Hash</dt><dd>${computed.leafHash.toString('hex')}</dd>` +
+          `<dt>Day Root</dt><dd>${computed.root.toString('hex')}</dd>` +
+          `<dt>Computed Head</dt><dd>${computed.head.toString('hex')}</dd>` +
+          `</dl>` +
+          `</body></html>`,
+      );
   });
 
   router.get('/proofs/:token', async (req, res) => {

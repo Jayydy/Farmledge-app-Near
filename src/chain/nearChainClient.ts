@@ -54,6 +54,7 @@ export interface NearChainConfig {
   readonly operatorSubject: string;
   readonly operatorFundYocto?: bigint;
   readonly indexerUrl?: string;
+  readonly fetchFn?: typeof fetch;
   readonly pollTimeoutMs?: number;
   readonly pollIntervalMs?: number;
   readonly defaultMaxTimeSeconds?: number;
@@ -215,6 +216,7 @@ export class NearChainClient implements ChainClient {
     return fetchNearEvents(this.rpc, {
       contractId: this.contractId,
       ...(this.config.indexerUrl !== undefined ? { indexerUrl: this.config.indexerUrl } : {}),
+      ...(this.config.fetchFn !== undefined ? { fetchFn: this.config.fetchFn } : {}),
       startLedger: range.startLedger,
       ...(range.endLedger !== undefined ? { endLedger: range.endLedger } : {}),
     });
@@ -361,7 +363,9 @@ export class NearChainClient implements ChainClient {
     if (found !== null) {
       if (found.status.Failure !== undefined) {
         const errStr = failureString(found);
-        return this.settle(db, row, 'failed', {
+        const code = parseNearContractError(errStr);
+        const settledStatus = code === ContractError.PendingExpired ? 'expired' : 'failed';
+        return this.settle(db, row, settledStatus, {
           ledger: await this.outcomeBlockHeight(found),
           error: errStr,
         });
@@ -421,20 +425,28 @@ export class NearChainClient implements ChainClient {
     return next;
   }
 
-  private async ensureFunded(subject: string, accountId: string): Promise<void> {
-    if (subject === this.config.operatorSubject) return;
-    if (this.fundedAccounts.has(accountId)) return;
+  async fundSubject(
+    subject: string,
+  ): Promise<{ subject: string; accountId: string; funded: boolean }> {
+    const accountId = await this.addressOf(subject);
+    if (subject === this.config.operatorSubject) {
+      return { subject, accountId, funded: false };
+    }
+    if (this.fundedAccounts.has(accountId)) {
+      return { subject, accountId, funded: false };
+    }
     const existing = await this.rpc.viewAccount(accountId);
     if (existing !== null) {
       this.fundedAccounts.add(accountId);
-      return;
+      return { subject, accountId, funded: false };
     }
     const fundAmount = this.config.operatorFundYocto ?? 0n;
     if (fundAmount <= 0n) {
       this.fundedAccounts.add(accountId);
-      return;
+      return { subject, accountId, funded: false };
     }
 
+    let didFund = false;
     const operatorId = await this.addressOf(this.config.operatorSubject);
     await this.withSignerQueue(operatorId, async () => {
       const checkAgain = await this.rpc.viewAccount(accountId);
@@ -475,7 +487,14 @@ export class NearChainClient implements ChainClient {
       const b64 = Buffer.from(signedTx.encode()).toString('base64');
       await this.rpc.sendTxAsync(b64);
       this.fundedAccounts.add(accountId);
+      didFund = true;
     });
+    return { subject, accountId, funded: didFund };
+  }
+
+  private async ensureFunded(subject: string, accountId: string): Promise<void> {
+    if (this.fundedAccounts.has(accountId)) return;
+    await this.fundSubject(subject);
   }
 
   private async invokeSingle(
@@ -619,9 +638,12 @@ export class NearChainClient implements ChainClient {
       const found = await this.rpc.txStatus(row.tx_hash, signerId);
       if (found !== null) {
         if (found.status.Failure !== undefined) {
-          return this.settle(db, row, 'failed', {
+          const errStr = failureString(found);
+          const code = parseNearContractError(errStr);
+          const settledStatus = code === ContractError.PendingExpired ? 'expired' : 'failed';
+          return this.settle(db, row, settledStatus, {
             ledger: await this.outcomeBlockHeight(found),
-            error: failureString(found),
+            error: errStr,
           });
         }
         if (found.status.SuccessValue !== undefined) {
@@ -801,7 +823,9 @@ function failureString(found: NearTxStatusResponse): string {
 
 function outcomeOf(row: NearTxRow): ChainTxOutcome {
   const contractError =
-    row.status === 'failed' && row.error !== null ? parseNearContractError(row.error) : null;
+    (row.status === 'failed' || row.status === 'expired') && row.error !== null
+      ? parseNearContractError(row.error)
+      : null;
   return {
     id: row.id,
     txHash: row.tx_hash,

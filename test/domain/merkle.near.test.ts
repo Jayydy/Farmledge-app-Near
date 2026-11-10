@@ -1,6 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { Keypair } from '@stellar/stellar-sdk';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -10,11 +11,13 @@ import {
   nearRecordBytes,
   weightSourceDiscriminant,
 } from '../../src/chain/nearLeaf.js';
+import { stellarEntryBytes } from '../../src/chain/stellarLeaf.js';
 import {
   buildTree,
   entryHash,
   foldProof,
   nextHead,
+  sha256,
   ZERO_HEAD,
   type BookRecordJson,
   type LeafJson,
@@ -39,20 +42,44 @@ interface TestVectorFile {
   };
 }
 
-const vectorPath = resolve(
-  import.meta.dirname,
-  '../../../farmledge-protocol-near/test-vectors/leaf_hash.json',
-);
+const committedFixturePath = resolve(import.meta.dirname, '../fixtures/leaf_hash.near.json');
+const siblingCandidates = [
+  process.env.FARMLEDGE_NEAR_LEAF_VECTORS,
+  resolve(import.meta.dirname, '../../../farmledge-protocol-near/test-vectors/leaf_hash.json'),
+  resolve(
+    import.meta.dirname,
+    '../../../farmledge-protocol-near/Farmledge-protocol-Near/test-vectors/leaf_hash.json',
+  ),
+].filter((p): p is string => p !== undefined && existsSync(p));
+
+const vectorPath = siblingCandidates[0] ?? committedFixturePath;
 
 describe('NEAR Borsh LeafHashPreimage and Merkle tree (test/domain/merkle.near.test.ts)', () => {
   const vectors = JSON.parse(readFileSync(vectorPath, 'utf8')) as TestVectorFile;
 
   it('reproduces farmledge-protocol-near/test-vectors/leaf_hash.json byte-for-byte', () => {
+    const committed = JSON.parse(readFileSync(committedFixturePath, 'utf8')) as TestVectorFile;
+    expect(vectors).toEqual(committed);
     expect(Buffer.from(nearLeafBytes(vectors.leaf)).toString('hex')).toBe(vectors.borsh_hex);
     expect(nearLeafHash(vectors.leaf).toString('hex')).toBe(vectors.leaf_hash);
     expect(entryHash(vectors.leaf, 'near').toString('hex')).toBe(vectors.leaf_hash);
     // Auto-detection on NEAR account IDs (non-G... owners) also selects NEAR encoding.
     expect(entryHash(vectors.leaf).toString('hex')).toBe(vectors.leaf_hash);
+  });
+
+  it('keeps Stellar XDR leaf encoding unchanged alongside NEAR Borsh encoding', () => {
+    const stellarLeaf: LeafJson = {
+      ...vectors.leaf,
+      owner: Keypair.random().publicKey(),
+      custodian: Keypair.random().publicKey(),
+      verifier: Keypair.random().publicKey(),
+    };
+    const expectedStellarHash = sha256(
+      Buffer.from([0x00]),
+      stellarEntryBytes(stellarLeaf),
+    ).toString('hex');
+    expect(entryHash(stellarLeaf, 'stellar').toString('hex')).toBe(expectedStellarHash);
+    expect(entryHash(stellarLeaf).toString('hex')).toBe(expectedStellarHash);
   });
 
   it('reproduces all leaf vectors, tree root, proofs, and head chain', () => {

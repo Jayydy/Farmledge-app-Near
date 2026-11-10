@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'SC*']
+  pull_request:
+
+jobs:
+  test:
+    name: Test (${{ matrix.chain }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        chain: [stellar, near]
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: farmledge
+          POSTGRES_PASSWORD: farmledge
+          POSTGRES_DB: farmledge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U farmledge -d farmledge"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      CHAIN_BACKEND: ${{ matrix.chain }}
+      DATABASE_URL: postgresql://farmledge:farmledge@localhost:5432/farmledge
+      TEST_DATABASE_ADMIN_URL: postgresql://farmledge:farmledge@localhost:5432/postgres
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run test suite (${{ matrix.chain }})
+        run: npm test
+
+  near-sandbox:
+    name: NEAR Sandbox Integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: farmledge
+          POSTGRES_PASSWORD: farmledge
+          POSTGRES_DB: farmledge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U farmledge -d farmledge"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      CHAIN_BACKEND: near
+      DATABASE_URL: postgresql://farmledge:farmledge@localhost:5432/farmledge
+      TEST_DATABASE_ADMIN_URL: postgresql://farmledge:farmledge@localhost:5432/postgres
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download farmledge_receipt.wasm from farmledge-protocol-near (optional)
+        uses: dawidd6/action-download-artifact@v6
+        continue-on-error: true
+        with:
+          repo: ${{ github.repository_owner }}/farmledge-protocol-near
+          workflow: ci.yml
+          branch: main
+          name: farmledge_receipt-wasm
+          path: artifacts/near
+
+      - name: Run NEAR sandbox integration tests
+        env:
+          NEAR_SANDBOX_WASM: artifacts/near/farmledge_receipt.wasm
+        run: npx vitest run test/chain/near/sandbox.test.ts

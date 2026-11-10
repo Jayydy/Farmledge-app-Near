@@ -19,69 +19,71 @@ interface PledgeBody {
  * proxy timeout, never a timeout it would read as failure, and a retry after
  * a lost response must find the same pledge, not a refusal.
  */
-describe('INV-1: the pledge response never turns "unknown" into "failed"', () => {
-  let h: ChainHarness;
-  let fake: FakeChain;
-  beforeEach(async () => {
-    h = await startChainHarness({ start: middayOf(DAY) });
-    fake = h.chain as FakeChain;
-  });
-  afterEach(async () => {
-    await h.close();
-  });
-
-  const input = (depositId: string): PledgeInput => ({
-    depositId,
-    lender: Keypair.random().publicKey(),
-    kg: 1000,
-    loanRef: 'LOAN-0001',
-    dueDate: new Date(h.clock.now().getTime() + 90 * 86_400_000),
-    gracePeriodSeconds: 86_400,
-    requestedBy: h.fixtures.custodianId,
-    verifierId: h.fixtures.verifierId,
-    farmerConfirmed: true,
-  });
-  /** A PledgeService that answers after 50 ms instead of 20 s. */
-  const quick = () =>
-    new PledgeService(
-      h.pool,
-      h.chain,
-      h.adapters.keys,
-      h.adapters.confirmation,
-      h.alerts,
-      createLogger('silent'),
-      h.clock.now,
-      50,
-    );
-  const holdMints = () => {
-    let release: () => void = () => undefined;
-    const queue = new Promise<void>((resolve) => {
-      release = resolve;
+describe.each(['stellar', 'near'] as const)(
+  'INV-1: the pledge response never turns "unknown" into "failed" (%s)',
+  (backend) => {
+    let h: ChainHarness;
+    let fake: FakeChain;
+    beforeEach(async () => {
+      h = await startChainHarness({ start: middayOf(DAY), backend });
+      fake = h.chain as FakeChain;
     });
-    fake.beforeMint = () => queue;
-    return () => {
-      fake.beforeMint = null;
-      release();
+    afterEach(async () => {
+      await h.close();
+    });
+
+    const input = (depositId: string): PledgeInput => ({
+      depositId,
+      lender: backend === 'near' ? 'lender-bank.testnet' : Keypair.random().publicKey(),
+      kg: 1000,
+      loanRef: 'LOAN-0001',
+      dueDate: new Date(h.clock.now().getTime() + 90 * 86_400_000),
+      gracePeriodSeconds: 86_400,
+      requestedBy: h.fixtures.custodianId,
+      verifierId: h.fixtures.verifierId,
+      farmerConfirmed: true,
+    });
+    /** A PledgeService that answers after 50 ms instead of 20 s. */
+    const quick = () =>
+      new PledgeService(
+        h.pool,
+        h.chain,
+        h.adapters.keys,
+        h.adapters.confirmation,
+        h.alerts,
+        createLogger('silent'),
+        h.clock.now,
+        50,
+      );
+    const holdMints = () => {
+      let release: () => void = () => undefined;
+      const queue = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      fake.beforeMint = () => queue;
+      return () => {
+        fake.beforeMint = null;
+        release();
+      };
     };
-  };
 
-  it('answers `minting` within the budget while the mint is still queued, then settles it in the background', async () => {
-    const lot = await anchoredLot(h);
-    const release = holdMints();
-    const svc = quick();
+    it('answers `minting` within the budget while the mint is still queued, then settles it in the background', async () => {
+      const lot = await anchoredLot(h);
+      const release = holdMints();
+      const svc = quick();
 
-    const started = Date.now();
-    const view = await svc.pledge(input(lot.depositId));
-    expect(Date.now() - started).toBeLessThan(2_000);
-    expect(view.status).toBe('minting');
-    expect((await lotState(h, lot.depositId))?.frozen_for_mint).not.toBeNull();
+      const started = Date.now();
+      const view = await svc.pledge(input(lot.depositId));
+      expect(Date.now() - started).toBeLessThan(2_000);
+      expect(view.status).toBe('minting');
+      expect((await lotState(h, lot.depositId))?.frozen_for_mint).not.toBeNull();
 
-    release();
-    await expect
-      .poll(async () => (await svc.get(view.pledge_id)).status)
-      .toBe('awaiting_lender_signature');
-    expect(await lotState(h, lot.depositId)).toMatchObject({ status: 'minted' });
-  });
+      release();
+      await expect
+        .poll(async () => (await svc.get(view.pledge_id)).status)
+        .toBe(backend === 'near' ? 'awaiting_lender_offer' : 'awaiting_lender_signature');
+      expect(await lotState(h, lot.depositId)).toMatchObject({ status: 'minted' });
+    });
 
   it('records a refusal that arrives after the response on the pledge, with its cause, never as an unhandled error', async () => {
     const lot = await anchoredLot(h);
@@ -128,4 +130,5 @@ describe('INV-1: the pledge response never turns "unknown" into "failed"', () =>
     expect(reused.status).toBe(409);
     expect(reused.body).toMatchObject({ error: { code: 'pledge_id_conflict' } });
   });
-});
+  },
+);
