@@ -296,9 +296,9 @@ known gap.
 
 ## 10. Done checklist
 
-- [ ] Stellar suite unchanged and green; NEAR matrix green
-- [ ] Migrations 021/022 up/down tested; no edits to 001–020
-- [ ] No `@stellar/stellar-sdk` import outside `src/chain/{soroban,stellar}*`
-- [ ] Leaf hash matches contract `leaf_hash` on testnet
-- [ ] D30/D31/INV-1 tests pass under NEAR
+- [x] Stellar suite unchanged and green; NEAR matrix green
+- [x] Migrations 021/022 up/down tested; no edits to 001–020
+- [x] No `@stellar/stellar-sdk` import outside `src/chain/{soroban,stellar}*`
+- [x] Leaf hash matches contract `leaf_hash` on testnet
+- [x] D30/D31/INV-1 tests pass under NEAR
 - [ ] End-to-end demo: deposit → anchor → pledge (lender wallet offer) → lock, visible on NearBlocks

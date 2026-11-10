@@ -30,7 +30,6 @@ import { verifyProofScript } from '../helpers/verifyProof.js';
  */
 const SECRET = 'local-dev-only-not-a-secret-change-me-0000';
 const DAY_MS = 86_400_000;
-const SCRIPT = verifyProofScript();
 
 interface PledgeResponse {
   pledge: {
@@ -332,7 +331,7 @@ describe.skipIf(process.env.TESTNET !== '1')('receipt contract v3 on Testnet', (
     );
     const file = path.join(tmpdir(), `bundle-${Date.now()}.json`);
     await writeFile(file, JSON.stringify(rows[0]?.bundle));
-    const out = execFileSync('python3', [SCRIPT, file, '--rpc', RPC_URL]).toString();
+    const out = execFileSync('python3', [verifyProofScript(), file, '--rpc', RPC_URL]).toString();
     expect(out).toMatch(/^OK: /m);
   }, 300_000);
 

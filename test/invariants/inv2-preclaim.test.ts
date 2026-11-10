@@ -17,7 +17,7 @@ describe.each(['stellar', 'near'] as const)('INV-2 the pre-claim gate (%s)', (ba
     fake = h.chain as FakeChain;
   });
   afterEach(async () => {
-    await h.close();
+    await (h as ChainHarness | undefined)?.close();
   });
 
   const archivePreclaimed = async (numbers: number[]) => {

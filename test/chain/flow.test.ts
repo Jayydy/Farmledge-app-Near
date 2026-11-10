@@ -20,7 +20,7 @@ describe.each(['stellar', 'near'] as const)(
       h = await startChainHarness({ start: middayOf(DAY), backend });
     });
     afterAll(async () => {
-      await h.close();
+      await (h as ChainHarness | undefined)?.close();
     });
 
     it('closes a day into a tree, anchors it, mints from the balance leaf and locks with the lender’s proof', async () => {

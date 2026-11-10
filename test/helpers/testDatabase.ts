@@ -11,7 +11,9 @@ import { runMigrations } from '../../src/db/migrate.js';
  * it afterwards. The default matches docker-compose.yml.
  */
 const ADMIN_URL =
-  process.env.TEST_DATABASE_URL ?? 'postgresql://farmledge:farmledge@localhost:5433/postgres';
+  process.env.TEST_DATABASE_URL ??
+  process.env.TEST_DATABASE_ADMIN_URL ??
+  'postgresql://farmledge:farmledge@localhost:5433/postgres';
 const PREFIX = 'farmledge_test_';
 
 export interface TestDatabase {

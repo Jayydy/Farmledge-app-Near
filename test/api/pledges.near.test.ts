@@ -37,7 +37,7 @@ describe('NEAR pledge API flow (POST /pledges -> POST /pledges/:id/lender-offer)
   });
 
   afterEach(async () => {
-    await h.close();
+    await (h as ChainHarness | undefined)?.close();
   });
 
   it('freezes the lot, mints on NEAR, returns awaiting_lender_offer + lender_tx_request, verifies offer_lock, and locks via accept_lock', async () => {

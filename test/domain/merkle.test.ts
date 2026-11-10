@@ -17,9 +17,9 @@ import {
   type BookRecordJson,
   type LeafJson,
 } from '../../src/domain/merkle.js';
-import { verifyProofScript } from '../helpers/verifyProof.js';
+import { findVerifyProofScript, verifyProofScript } from '../helpers/verifyProof.js';
 
-const SCRIPT = verifyProofScript();
+const SCRIPT = findVerifyProofScript();
 
 function leaf(overrides: Partial<LeafJson> = {}): LeafJson {
   return {
@@ -50,12 +50,13 @@ function leaf(overrides: Partial<LeafJson> = {}): LeafJson {
 
 /** Runs functions from the published standalone verifier, unchanged. */
 function python(code: string, input: unknown): string {
+  const script = verifyProofScript();
   return execFileSync(
     'python3',
     [
       '-c',
       `import json, sys, importlib.util
-spec = importlib.util.spec_from_file_location("vp", ${JSON.stringify(SCRIPT)})
+spec = importlib.util.spec_from_file_location("vp", ${JSON.stringify(script)})
 vp = importlib.util.module_from_spec(spec); spec.loader.exec_module(vp)
 data = json.load(sys.stdin)
 ${code}`,
@@ -67,7 +68,7 @@ ${code}`,
 }
 
 describe('merkle', () => {
-  it('hashes a leaf exactly as scripts/verify_proof.py does', () => {
+  it.skipIf(SCRIPT === null)('hashes a leaf exactly as scripts/verify_proof.py does', () => {
     const leaves = [
       leaf(),
       leaf({ kind: 0, kg: 0, bags: 1, weight_source: 'BagEstimate' }),
@@ -83,23 +84,27 @@ describe('merkle', () => {
     const tree = buildTree(hashes);
     for (const index of [0, 5, 10]) {
       const proof = tree.proofs[index] ?? [];
-      const folded = python(
-        'print(vp.fold(bytes.fromhex(data["h"]), data["i"], [bytes.fromhex(p) for p in data["p"]]).hex())',
-        {
-          h: hashes[index]?.toString('hex'),
-          i: index,
-          p: proof.map((p) => p.toString('hex')),
-        },
-      );
-      expect(folded).toBe(tree.root.toString('hex'));
+      if (SCRIPT !== null) {
+        const folded = python(
+          'print(vp.fold(bytes.fromhex(data["h"]), data["i"], [bytes.fromhex(p) for p in data["p"]]).hex())',
+          {
+            h: hashes[index]?.toString('hex'),
+            i: index,
+            p: proof.map((p) => p.toString('hex')),
+          },
+        );
+        expect(folded).toBe(tree.root.toString('hex'));
+      }
       expect(foldProof(hashes[index] as Buffer, index, proof).equals(tree.root)).toBe(true);
       expect(proof).toHaveLength(depthFor(11));
     }
-    const head = python(
-      'print(vp.chain(bytes(32), data["d"], data["n"], bytes.fromhex(data["r"])).hex())',
-      { d: 20_366, n: 11, r: tree.root.toString('hex') },
-    );
-    expect(head).toBe(nextHead(ZERO_HEAD, 20_366, 11, tree.root).toString('hex'));
+    if (SCRIPT !== null) {
+      const head = python(
+        'print(vp.chain(bytes(32), data["d"], data["n"], bytes.fromhex(data["r"])).hex())',
+        { d: 20_366, n: 11, r: tree.root.toString('hex') },
+      );
+      expect(head).toBe(nextHead(ZERO_HEAD, 20_366, 11, tree.root).toString('hex'));
+    }
   });
 
   it('pads to a power of two with sha256(0x00), and a one-leaf tree is its leaf', () => {

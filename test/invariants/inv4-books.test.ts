@@ -19,7 +19,7 @@ describe('INV-4 complete, honest daily books', () => {
     h = await startChainHarness({ start: middayOf(DAY) });
   });
   afterEach(async () => {
-    await h.close();
+    await (h as ChainHarness | undefined)?.close();
   });
 
   it('puts every deposit, dispatch, adjustment and balance in the day’s tree, each provable to its root', async () => {

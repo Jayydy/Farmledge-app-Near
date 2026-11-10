@@ -19,7 +19,7 @@ describe('INV-3 one lot, one deposit number', () => {
     h = await startChainHarness({ start: middayOf(DAY) });
   });
   afterEach(async () => {
-    await h.close();
+    await (h as ChainHarness | undefined)?.close();
   });
 
   const numbers = async () =>

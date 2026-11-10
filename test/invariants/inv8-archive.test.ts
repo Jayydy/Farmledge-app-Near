@@ -151,7 +151,7 @@ describe('INV-8 the event archive', () => {
     history(fake);
   });
   afterEach(async () => {
-    await h.close();
+    await (h as ChainHarness | undefined)?.close();
   });
 
   it('archives every event, raw XDR and all, in the transaction that moves the cursor; a page that fails moves nothing', async () => {
