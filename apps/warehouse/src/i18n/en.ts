@@ -153,7 +153,7 @@ export const en = {
     'NOT PROOF OF DEPOSIT. This shows the deposit was recorded on the tablet. Ask for your proof slip on your next visit.',
   slipProofTitle: 'DEPOSIT SLIP',
   slipProofNote:
-    "The QR code holds this deposit's record and salt. Once the warehouse's books for the day are anchored, it can be checked on the Stellar network without Farmledge.",
+    "The QR code holds this deposit's record and salt. Once the warehouse's books for the day are anchored, it can be checked on the public blockchain network without Farmledge.",
   capturedAt: 'Recorded',
   custodian: 'Custodian',
   warehouse: 'Warehouse',

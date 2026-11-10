@@ -201,6 +201,7 @@ export class DepositService {
   private readonly rules: DepositRules;
   private readonly weightSource: WeightSource;
   private readonly businessTimeZone: string;
+  private readonly chainBackend: Config['chain']['backend'];
 
   constructor(
     private readonly pool: pg.Pool,
@@ -212,6 +213,7 @@ export class DepositService {
     this.rules = depositRules(config);
     this.weightSource = intakeWeightSource(config.features.weightMode);
     this.businessTimeZone = config.businessTimeZone;
+    this.chainBackend = config.chain.backend;
   }
 
   /**
@@ -301,6 +303,7 @@ export class DepositService {
         client,
         this.keys,
         lotMovement.rows.map((row) => row.id),
+        this.chainBackend,
       );
       return {
         inserted: true,

@@ -479,7 +479,7 @@ export class DispatchService {
       const lotMovementIds = await postLotMovements(client, movementId, drawn.draws, lots, now);
       // INV-4 / INV-7: a dispatch leaf per lot drawn, salted now, so the
       // slip can carry it.
-      await writeBookEntries(client, this.keys, lotMovementIds);
+      await writeBookEntries(client, this.keys, lotMovementIds, this.config.chain.backend);
       const remaining = lots.map((lot) => {
         const draw = drawn.draws.find((d) => d.depositId === lot.depositId);
         return draw === undefined

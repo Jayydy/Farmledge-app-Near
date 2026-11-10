@@ -2,6 +2,7 @@ import type pg from 'pg';
 
 import type { ChainClient } from './chain/chainClient.js';
 import { OPERATOR_SUBJECT } from './chain/addresses.js';
+import { NearChainClient } from './chain/nearChainClient.js';
 import { NoopChainClient } from './chain/noopChainClient.js';
 import { SorobanChainClient } from './chain/sorobanChainClient.js';
 import type { Config } from './config/index.js';
@@ -40,7 +41,21 @@ export class AdapterUnavailableError extends Error {
 }
 
 export function createChainClient(config: Config, keys: KeyService, logger: Logger): ChainClient {
-  if (!config.features.chainEnabled) return new NoopChainClient();
+  if (!config.features.chainEnabled) return new NoopChainClient(config.chain.backend);
+  if (config.chain.backend === 'near') {
+    return new NearChainClient(
+      {
+        rpcUrl: config.chain.rpcUrl,
+        networkId: config.chain.networkId,
+        contractId: config.chain.contractId,
+        operatorSubject: OPERATOR_SUBJECT,
+        operatorFundYocto: config.chain.operatorFundYocto,
+        indexerUrl: config.chain.indexerUrl,
+      },
+      keys,
+      logger,
+    );
+  }
   return new SorobanChainClient(
     {
       rpcUrl: config.chain.rpcUrl,

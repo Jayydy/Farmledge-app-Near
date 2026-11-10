@@ -320,6 +320,7 @@ export async function postAdjustment(
   db: pg.ClientBase,
   record: AdjustmentRecord,
   keys: KeyService,
+  backend: Config['chain']['backend'] = 'stellar',
 ): Promise<void> {
   const kgDelta = (record.centiKgDelta / 100).toFixed(2);
   const lots = await lockedLots(db, record);
@@ -427,7 +428,7 @@ export async function postAdjustment(
     record.occurredAt,
   );
   // D32: adjustments are book records, hashed into the day's tree.
-  await writeBookEntries(db, keys, lotMovementIds);
+  await writeBookEntries(db, keys, lotMovementIds, backend);
 }
 
 export class LedgerService {
@@ -686,7 +687,7 @@ export class LedgerService {
       if (balance.bags + record.bagsDelta < 0 || balance.centiKg + record.centiKgDelta < 0) {
         throw insufficientBalance(balance, 'The adjustment would take the balance below zero');
       }
-      await postAdjustment(client, record, this.keys);
+      await postAdjustment(client, record, this.keys, this.config.chain.backend);
       const row = await this.findAdjustment(client, record.id);
       if (row === null) throw new Error('adjustment missing after insert');
       return { kind: 'created' as const, adjustment: toAdjustmentView(row) };
