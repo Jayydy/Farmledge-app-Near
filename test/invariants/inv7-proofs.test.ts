@@ -30,11 +30,11 @@ function verifies(bundle: ProofBundle, chainHead: Buffer): boolean {
  * INV-7. Every farmer gets their proofs, automatically, and verification
  * never goes through Farmledge.
  */
-describe('INV-7 every farmer gets their proofs', () => {
+describe.each(['stellar', 'near'] as const)('INV-7 every farmer gets their proofs (%s)', (backend) => {
   let h: ChainHarness;
   let fake: FakeChain;
   beforeEach(async () => {
-    h = await startChainHarness({ start: middayOf(DAY) });
+    h = await startChainHarness({ start: middayOf(DAY), backend });
     fake = h.chain as FakeChain;
   });
   afterEach(async () => {

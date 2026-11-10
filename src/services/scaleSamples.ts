@@ -181,6 +181,7 @@ export class ScaleSampleService {
           input.recordedBy,
           this.clock(),
           this.keys,
+          this.config.chain.backend,
         );
       }
       return { kind: 'created' as const, sample: toView(row) };
@@ -281,6 +282,7 @@ async function postReweigh(
   recordedBy: string,
   now: Date,
   keys: KeyService,
+  backend: Config['chain']['backend'] = 'stellar',
 ): Promise<void> {
   if (deposit.weight_source !== 'scale' || ['rejected', 'cancelled'].includes(deposit.status)) {
     return;
@@ -319,6 +321,7 @@ async function postReweigh(
       occurredAt: now,
     },
     keys,
+    backend,
   );
 }
 

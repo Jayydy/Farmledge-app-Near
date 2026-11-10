@@ -1,15 +1,19 @@
 import { createHash, randomBytes } from 'node:crypto';
 
 import type { Keypair } from '@stellar/stellar-sdk';
-import { Address, hash, nativeToScVal, StrKey, xdr } from '@stellar/stellar-sdk';
+import { Address, hash, nativeToScVal, xdr } from '@stellar/stellar-sdk';
 
-import { addressFor } from '../../src/chain/addresses.js';
+import { baseEncode } from 'near-api-js';
+
+import { addressFor, isValidAccount } from '../../src/chain/addresses.js';
 import {
   ContractCallError,
   DeadlineError,
   ContractError,
+  LenderAuthError,
   type AnchorCall,
   type AnchorHead,
+  type ChainBackend,
   type ChainClient,
   type ChainEvent,
   type ChainTxOutcome,
@@ -31,6 +35,7 @@ import { entryHash, foldProof, nextHead, depthFor, ZERO_HEAD } from '../../src/d
 import type { KeyService } from '../../src/keys/keyService.js';
 
 export const FAKE_CONTRACT = 'CBW6TA5UJMXJY2VYPJV6WUVWNUP3PKZNPXFMC2CNVCWZDF3SKIT4UAIN';
+export const FAKE_NEAR_CONTRACT = 'receipt.farmledge.testnet';
 const PASSPHRASE = 'Test SDF Network ; September 2015';
 
 /**
@@ -57,13 +62,13 @@ type FailMode =
  * contract.
  */
 export class FakeChain implements ChainClient {
-  readonly backend = 'stellar' as const;
+  readonly backend: ChainBackend = 'stellar';
   readonly enabled = true;
-  readonly contractId = FAKE_CONTRACT;
-  readonly networkId = PASSPHRASE;
-  readonly networkPassphrase = PASSPHRASE;
+  readonly contractId: string = FAKE_CONTRACT;
+  readonly networkId: string = PASSPHRASE;
+  readonly networkPassphrase: string = PASSPHRASE;
   readonly rpcUrl = 'https://rpc.fake.test';
-  readonly capabilities = { ttl: true } as const;
+  readonly capabilities: { readonly ttl: boolean } = { ttl: true };
   ledger = 1_000_000;
   instanceGone = false;
   readonly heads = new Map<string, AnchorHead>();
@@ -97,11 +102,11 @@ export class FakeChain implements ChainClient {
   }
 
   validateAccount(address: string): boolean {
-    return StrKey.isValidEd25519PublicKey(address);
+    return isValidAccount(address, this.backend);
   }
 
   addressOf(subject: string): Promise<string> {
-    return addressFor(this.keys, subject);
+    return addressFor(this.keys, subject, this.backend);
   }
 
   latestLedger() {
@@ -151,7 +156,7 @@ export class FakeChain implements ChainClient {
   }
 
   leafHash(leaf: Parameters<ChainClient['leafHash']>[0]) {
-    return Promise.resolve(entryHash(leaf));
+    return Promise.resolve(entryHash(leaf, this.backend));
   }
 
   receiptLiveUntil(ids: readonly bigint[]) {
@@ -223,7 +228,7 @@ export class FakeChain implements ChainClient {
     if (
       stored === undefined ||
       call.proof.length !== depthFor(stored.leaves) ||
-      !foldProof(entryHash(leaf), leaf.index, call.proof).equals(stored.root)
+      !foldProof(entryHash(leaf, this.backend), leaf.index, call.proof).equals(stored.root)
     ) {
       fail(ContractError.InvalidProof);
     }
@@ -249,7 +254,9 @@ export class FakeChain implements ChainClient {
           weightSource: leaf.weight_source,
           lender: null,
         });
-        return nativeToScVal(id, { type: 'u64' }).toXdr('base64');
+        return this.backend === 'near'
+          ? id.toString()
+          : nativeToScVal(id, { type: 'u64' }).toXdr('base64');
       },
       call.notAfter,
     );
@@ -347,14 +354,17 @@ export class FakeChain implements ChainClient {
     }
   }
 
-  private async record(
+  protected async record(
     db: Queryable,
     purpose: string,
     subject: string,
     apply: () => string | null,
     notAfter?: number,
   ): Promise<ChainTxOutcome> {
-    const txHash = randomBytes(32).toString('hex');
+    const txHash =
+      this.backend === 'near'
+        ? baseEncode(randomBytes(32))
+        : randomBytes(32).toString('hex');
     const maxTime = new Date(
       Math.min(
         this.clock().getTime() + 300_000,
@@ -368,10 +378,19 @@ export class FakeChain implements ChainClient {
     if (mode !== null) this.failNext = null;
     // Recorded before "submission", as the real client does.
     const inserted = await db.query<{ id: string }>(
-      `INSERT INTO chain_transactions (contract_id, purpose, subject, tx_hash, envelope_xdr, max_time,
-                                       signed_after_ledger)
-       VALUES ($1, $2, $3, $4, 'fake-envelope', $5, $6) RETURNING id`,
-      [this.contractId, purpose, subject, txHash, maxTime, this.ledger],
+      `INSERT INTO chain_transactions (chain, contract_id, purpose, subject, tx_hash, envelope_xdr,
+                                       envelope_encoding, max_time, signed_after_ledger)
+       VALUES ($1, $2, $3, $4, $5, 'fake-envelope', $6, $7, $8) RETURNING id`,
+      [
+        this.backend,
+        this.contractId,
+        purpose,
+        subject,
+        txHash,
+        this.backend === 'near' ? 'borsh_b64' : 'xdr',
+        maxTime,
+        this.ledger,
+      ],
     );
     const id = inserted.rows[0]?.id ?? '';
     if (mode === 'landed_unseen') {
@@ -387,6 +406,7 @@ export class FakeChain implements ChainClient {
         status: 'submitted',
         contractError: null,
         returnValueXdr: null,
+        returnValue: null,
         ledger: null,
         error: null,
       };
@@ -402,6 +422,7 @@ export class FakeChain implements ChainClient {
         status: 'submitted',
         contractError: null,
         returnValueXdr: null,
+        returnValue: null,
         ledger: null,
         error: null,
       };
@@ -426,6 +447,7 @@ export class FakeChain implements ChainClient {
         status: 'failed',
         contractError: code,
         returnValueXdr: null,
+        returnValue: null,
         ledger: null,
         error,
       };
@@ -443,10 +465,125 @@ export class FakeChain implements ChainClient {
       status: 'success',
       contractError: null,
       returnValueXdr: returnValue,
-      returnValue: decodeSorobanReturnValue(returnValue),
+      returnValue:
+        this.backend === 'near' ? returnValue : decodeSorobanReturnValue(returnValue),
       ledger: this.ledger,
       error: null,
     };
+  }
+}
+
+export interface FakeLenderOffer {
+  signerId: string;
+  receiverId?: string;
+  method?: string;
+  args: Record<string, unknown>;
+  failed?: boolean;
+}
+
+/**
+ * In-memory NEAR receipt contract stand-in (`CHAIN_BACKEND=near`).
+ * Uses borsh leaf hashing, NEAR implicit accounts, 2-step `offer_lock` /
+ * `accept_lock` verification, and `capabilities.ttl = false`.
+ */
+export class FakeNearChain extends FakeChain {
+  override readonly backend = 'near' as const;
+  override readonly contractId = FAKE_NEAR_CONTRACT;
+  override readonly networkId = 'testnet';
+  override readonly networkPassphrase = 'testnet';
+  override readonly capabilities = { ttl: false } as const;
+  readonly lenderOffers = new Map<string, FakeLenderOffer>();
+
+  recordOfferLock(offer: FakeLenderOffer): string {
+    const txHash = baseEncode(randomBytes(32));
+    this.lenderOffers.set(txHash, offer);
+    return txHash;
+  }
+
+  override prepareLock(call: LockCall): Promise<PreparedLock> {
+    const receipt = this.receipts.get(call.receiptId.toString());
+    if (receipt === undefined) {
+      return Promise.reject(new ContractCallError('lock_offer', 10, 'E10: ReceiptNotFound'));
+    }
+    if (receipt.owner === call.lender) {
+      throw new ContractCallError('lock_offer', 36, 'E36: SelfPledge');
+    }
+    const expiresAt = Math.floor(Date.now() / 1000) + 86_400;
+    return Promise.resolve({
+      kind: 'near_offer',
+      txRequest: {
+        receiverId: this.contractId,
+        methodName: 'lock_offer',
+        args: {
+          receipt_id: call.receiptId.toString(),
+          amount_kg: call.kg.toString(),
+          loan_ref: call.loanRef,
+          due_date: call.dueDate,
+          grace_period_seconds: call.gracePeriodSeconds,
+          expires_at: expiresAt,
+        },
+        gas: '30000000000000',
+        deposit: '1',
+      },
+    });
+  }
+
+  override async submitLock(
+    db: Queryable,
+    call: LockCall,
+    lenderOfferTxHash: string,
+    ownerSubject: string,
+    subject: string,
+  ): Promise<ChainTxOutcome> {
+    const offer = this.lenderOffers.get(lenderOfferTxHash);
+    if (offer === undefined) {
+      throw new LenderAuthError(`lender lock_offer transaction ${lenderOfferTxHash} not found`);
+    }
+    if (offer.failed === true) {
+      throw new LenderAuthError('lender lock_offer transaction failed on-chain');
+    }
+    if (offer.signerId !== call.lender) {
+      throw new LenderAuthError(
+        `lock_offer signed by ${offer.signerId}, expected lender ${call.lender}`,
+      );
+    }
+    if ((offer.receiverId ?? this.contractId) !== this.contractId) {
+      throw new LenderAuthError(
+        `lock_offer called ${offer.receiverId ?? ''}, expected ${this.contractId}`,
+      );
+    }
+    if ((offer.method ?? 'lock_offer') !== 'lock_offer') {
+      throw new LenderAuthError(`expected lock_offer call, got ${offer.method ?? ''}`);
+    }
+    const a = offer.args;
+    const receiptIdArg =
+      typeof a.receipt_id === 'string' || typeof a.receipt_id === 'number'
+        ? String(a.receipt_id)
+        : '';
+    const rawKg = a.amount_kg ?? a.kg;
+    const kgArg = typeof rawKg === 'string' || typeof rawKg === 'number' ? String(rawKg) : '';
+    if (
+      receiptIdArg !== call.receiptId.toString() ||
+      kgArg !== call.kg.toString() ||
+      a.loan_ref !== call.loanRef ||
+      Number(a.due_date) !== call.dueDate ||
+      Number(a.grace_period_seconds) !== call.gracePeriodSeconds
+    ) {
+      throw new LenderAuthError('lock_offer arguments do not match the pledge terms');
+    }
+    this.signedFor.push({ method: 'lock', subject: ownerSubject });
+    const receipt = this.receipts.get(call.receiptId.toString());
+    if (receipt?.status !== 'Active') {
+      throw new ContractCallError('accept_lock', 12, 'E12: ReceiptNotActive');
+    }
+    if (receipt.weightSource !== 'Scale') {
+      throw new ContractCallError('accept_lock', 30, 'E30: NotScaleWeighed');
+    }
+    return this.record(db, 'lock', subject, () => {
+      receipt.status = 'Locked';
+      receipt.lender = call.lender;
+      return call.receiptId.toString();
+    });
   }
 }
 

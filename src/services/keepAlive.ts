@@ -56,6 +56,21 @@ export class KeepAliveService {
   ) {}
 
   async run(): Promise<KeepAliveReport> {
+    if (!this.chain.capabilities.ttl) {
+      this.logger.info(
+        { backend: this.chain.backend, contractId: this.chain.contractId },
+        'keep-alive skipped: chain uses storage staking rather than TTL rent',
+      );
+      return {
+        sent: [],
+        skippedFinished: 0,
+        batches: 0,
+        minDaysRemaining: null,
+        lowTtl: [],
+        recovered: [],
+        statusesFromChain: false,
+      };
+    }
     const contractId = this.chain.contractId;
     if (await chainHalted(this.pool))
       throw new Error('chain writers are halted: a Testnet reset is unresolved');

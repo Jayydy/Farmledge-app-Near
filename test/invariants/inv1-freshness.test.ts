@@ -12,11 +12,11 @@ import { anchoredLot, DAY, lotState, pledge, rawLotMovement, sqlError } from './
  * mint's confirmation or definite abandonment. Fail closed; unfreeze only
  * when the mint can no longer land.
  */
-describe('INV-1 freshness: the mint freeze', () => {
+describe.each(['stellar', 'near'] as const)('INV-1 freshness: the mint freeze (%s)', (backend) => {
   let h: ChainHarness;
   let fake: FakeChain;
   beforeEach(async () => {
-    h = await startChainHarness({ start: middayOf(DAY) });
+    h = await startChainHarness({ start: middayOf(DAY), backend });
     fake = h.chain as FakeChain;
   });
   afterEach(async () => {

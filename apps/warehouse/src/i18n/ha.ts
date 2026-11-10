@@ -153,7 +153,7 @@ export const ha = {
     'BA SHAIDAR AJIYA BA CE. Tana nuna an rubuta ajiyar a na’ura. Ka nemi takardar shaidarka a ziyararka ta gaba.',
   slipProofTitle: 'TAKARDAR AJIYA',
   slipProofNote:
-    'Lambar QR tana ɗauke da bayanan wannan ajiya da gishirinta. Idan an ɗaure littattafan rumbun na ranar, za a iya duba ta a hanyar Stellar ba tare da Farmledge ba.',
+    'Lambar QR tana ɗauke da bayanan wannan ajiya da gishirinta. Idan an ɗaure littattafan rumbun na ranar, za a iya duba ta a kan hanyar blockchain ta jama’a ba tare da Farmledge ba.',
   capturedAt: 'An rubuta',
   custodian: 'Mai kula',
   warehouse: 'Rumbu',

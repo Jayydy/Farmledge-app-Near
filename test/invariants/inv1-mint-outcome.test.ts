@@ -19,13 +19,15 @@ import { anchoredLot, DAY, lotState, pledge } from './helpers.js';
  *   has closed after that deadline.
  * (Gap B is pinned at the client: test/chain/settle.test.ts.)
  */
-describe('INV-1: a lot is unfrozen only once its mint can no longer land', () => {
-  let h: ChainHarness;
-  let fake: FakeChain;
-  beforeEach(async () => {
-    h = await startChainHarness({ start: middayOf(DAY) });
-    fake = h.chain as FakeChain;
-  });
+describe.each(['stellar', 'near'] as const)(
+  'INV-1: a lot is unfrozen only once its mint can no longer land (%s)',
+  (backend) => {
+    let h: ChainHarness;
+    let fake: FakeChain;
+    beforeEach(async () => {
+      h = await startChainHarness({ start: middayOf(DAY), backend });
+      fake = h.chain as FakeChain;
+    });
   afterEach(async () => {
     await h.close();
   });

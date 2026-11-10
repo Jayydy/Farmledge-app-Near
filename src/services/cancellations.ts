@@ -220,6 +220,7 @@ export class CancellationService {
         client,
         this.keys,
         voided.rows.map((row) => row.id),
+        this.config.chain.backend,
       );
       return {
         ...cancellation,

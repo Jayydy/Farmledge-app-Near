@@ -25,7 +25,7 @@ import { LocalDiskPhotoStore } from '../../src/storage/localDiskPhotoStore.js';
 import { loadFixtures, type Fixtures } from '../fixtures/index.js';
 import { depositBody, dispatchBody } from './api.js';
 import { testConfig } from './env.js';
-import { FakeChain } from './fakeChain.js';
+import { FakeChain, FakeNearChain, FAKE_NEAR_CONTRACT } from './fakeChain.js';
 import { createMigratedDatabase, type TestDatabase } from './testDatabase.js';
 
 const DAY_MS = 86_400_000;
@@ -73,6 +73,7 @@ export interface ChainHarness {
  */
 export async function startChainHarness(options: {
   start: Date;
+  backend?: 'stellar' | 'near';
   chain?: (h: { adapters: Adapters; clock: TestClock }) => ChainClient;
   env?: Record<string, string>;
   /**
@@ -94,20 +95,41 @@ export async function startChainHarness(options: {
     client.release();
   }
   const photoDir = await mkdtemp(path.join(tmpdir(), 'farmledge-photos-'));
+  const isNear = options.backend === 'near' || options.env?.CHAIN_BACKEND === 'near';
   const config = testConfig(db.url, 'test', {
     WEIGHT_MODE: 'scale_required',
     LENDING_ENABLED: 'true',
     // Lending on means receipts carry claims: paper release authority is refused (D56).
     RELEASE_AUTHORITY: 'farmledge',
+    ...(isNear
+      ? {
+          CHAIN_BACKEND: 'near',
+          NEAR_NETWORK: 'testnet',
+          NEAR_RPC_URL: 'https://rpc.testnet.near.org',
+          NEAR_CONTRACT_ID: FAKE_NEAR_CONTRACT,
+          NEAR_CONTRACT_START_BLOCK: '4917586',
+        }
+      : {}),
     ...options.env,
   });
   const logger = createLogger('silent');
   const clock = new TestClock(options.start);
   const sms = new MockSmsGateway(logger);
   const base = createAdapters(config, pool, logger);
-  const chain = options.chain?.({ adapters: base, clock }) ?? new FakeChain(base.keys, clock.now);
+  const chain =
+    options.chain?.({ adapters: base, clock }) ??
+    (isNear ? new FakeNearChain(base.keys, clock.now) : new FakeChain(base.keys, clock.now));
   const adapters: Adapters = { ...base, sms, chain };
-  const configForChain = { ...config, chain: { ...config.chain, contractId: chain.contractId } };
+  const configForChain = {
+    ...config,
+    chain: {
+      ...config.chain,
+      backend: chain.backend,
+      contractId: chain.contractId,
+      networkId: chain.networkId,
+      networkPassphrase: chain.networkPassphrase,
+    },
+  };
   await assertChainDeployment(pool, configForChain);
   if (options.chain === undefined) {
     // ... and on the contract, from when their books are anchored (D53).

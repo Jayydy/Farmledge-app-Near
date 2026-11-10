@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type pg from 'pg';
 
 import { addressFor, subjectOf } from '../chain/addresses.js';
+import type { ChainBackend } from '../chain/chainClient.js';
 import type { Queryable } from '../db/pool.js';
 import { chainSymbol, unixSeconds, utcDay, warehouseSymbol } from '../domain/book.js';
 import type { BalanceKey } from '../domain/ledger.js';
@@ -181,12 +182,13 @@ export interface LotIdentity {
 export async function lotIdentity(
   keys: KeyService,
   row: { warehouse_code: string; farmer_id: string; custodian_id: string; verifier_id: string },
+  backend: ChainBackend = 'stellar',
 ): Promise<LotIdentity> {
   return {
     warehouseSymbol: warehouseSymbol(row.warehouse_code),
-    owner: await addressFor(keys, subjectOf.farmer(row.farmer_id)),
-    custodian: await addressFor(keys, subjectOf.custodian(row.custodian_id)),
-    verifier: await addressFor(keys, subjectOf.verifier(row.verifier_id)),
+    owner: await addressFor(keys, subjectOf.farmer(row.farmer_id), backend),
+    custodian: await addressFor(keys, subjectOf.custodian(row.custodian_id), backend),
+    verifier: await addressFor(keys, subjectOf.verifier(row.verifier_id), backend),
   };
 }
 
@@ -198,8 +200,12 @@ type EntryContent =
       content: Omit<BookRecordJson, 'day' | 'index' | 'salt'>;
     };
 
-async function contentFor(keys: KeyService, row: MovementContext): Promise<EntryContent> {
-  const id = await lotIdentity(keys, row);
+async function contentFor(
+  keys: KeyService,
+  row: MovementContext,
+  backend: ChainBackend,
+): Promise<EntryContent> {
+  const id = await lotIdentity(keys, row, backend);
   const base = {
     warehouse_id: id.warehouseSymbol,
     deposit_no: Number(row.deposit_no),
@@ -259,6 +265,7 @@ export async function writeBookEntries(
   client: Queryable,
   keys: KeyService,
   lotMovementIds: readonly string[],
+  backend: ChainBackend = 'stellar',
 ): Promise<string[]> {
   const ids: string[] = [];
   for (const lotMovementId of lotMovementIds) {
@@ -275,7 +282,7 @@ export async function writeBookEntries(
     ]);
     const row = rows[0];
     if (row === undefined) throw new Error(`lot movement ${lotMovementId} not found`);
-    const entry = await contentFor(keys, row);
+    const entry = await contentFor(keys, row, backend);
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO book_entries (warehouse_id, entry_type, kind, record_kind, deposit_id,
                                  deposit_no, farmer_id, lot_movement_id, content, salt,

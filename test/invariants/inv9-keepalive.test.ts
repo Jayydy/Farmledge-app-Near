@@ -104,4 +104,25 @@ describe('INV-9 keep-alive', () => {
       { key: `ttl_low:${fake.contractId}:1`, severity: 'page' },
     ]);
   });
+
+  it('skips keep-alive cleanly on NEAR where capabilities.ttl is false (storage staking)', async () => {
+    const nearHarness = await startChainHarness({ start: middayOf(DAY), backend: 'near' });
+    try {
+      const nearFake = nearHarness.chain as FakeChain;
+      nearFake.seedReceipt('Active');
+      const report = await nearHarness.keepAlive.run();
+      expect(report).toEqual({
+        sent: [],
+        skippedFinished: 0,
+        batches: 0,
+        minDaysRemaining: null,
+        lowTtl: [],
+        recovered: [],
+        statusesFromChain: false,
+      });
+      expect(nearFake.ttlBatches).toEqual([]);
+    } finally {
+      await nearHarness.close();
+    }
+  });
 });

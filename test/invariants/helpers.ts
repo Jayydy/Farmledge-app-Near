@@ -13,7 +13,7 @@ export function pledgeBody(
 ): Record<string, unknown> {
   return {
     deposit_id: depositId,
-    lender: Keypair.random().publicKey(),
+    lender: h.chain.backend === 'near' ? 'lender-bank.testnet' : Keypair.random().publicKey(),
     kg: 1000,
     loan_ref: 'LOAN-0001',
     due_date: new Date(h.clock.now().getTime() + 90 * 86_400_000).toISOString(),

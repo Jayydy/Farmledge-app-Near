@@ -24,6 +24,8 @@ const MAX_SEND_ATTEMPTS = 8;
 
 /** The proof bundle (docs/events.md, "Bundle format"). */
 export interface ProofBundle {
+  chain?: 'stellar' | 'near';
+  encoding?: 'soroban_xdr' | 'near_borsh';
   rpc: string;
   contract_id: string;
   leaf: LeafJson;
@@ -92,6 +94,8 @@ export class ProofService {
       [contractId, row.warehouse_id, row.day],
     );
     return {
+      chain: this.chain.backend,
+      encoding: this.chain.backend === 'near' ? 'near_borsh' : 'soroban_xdr',
       rpc: this.config.chain.rpcUrl,
       contract_id: contractId,
       leaf: { ...row.content, day: row.day, index: row.idx, salt: row.salt.toString('hex') },

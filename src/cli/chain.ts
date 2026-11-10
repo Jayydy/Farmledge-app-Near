@@ -135,9 +135,27 @@ async function main(): Promise<void> {
       case 'rebuild':
         console.log(JSON.stringify({ replayed: await indexer.rebuild() }));
         return;
+      case 'near:deploy-check': {
+        const exists = await chain.instanceExists();
+        const latest = await chain.latestLedger();
+        console.log(
+          JSON.stringify({
+            backend: chain.backend,
+            contract_id: chain.contractId,
+            network_id: chain.networkId,
+            instance_exists: exists,
+            latest_block: latest.sequence,
+          }),
+        );
+        if (!exists) throw new Error(`contract ${chain.contractId} does not exist on ${chain.networkId}`);
+        return;
+      }
+      case 'near:fund-subjects':
+        await setup(pool, adapters.keys, config, false);
+        return;
       default:
         console.error(
-          'Usage: chain <index|anchor|proofs|keepalive|resolve-pending|verify-archive|detect-reset|backup|rebuild|setup|reset>',
+          'Usage: chain <index|anchor|proofs|keepalive|resolve-pending|verify-archive|detect-reset|backup|rebuild|setup|reset|near:deploy-check|near:fund-subjects>',
         );
         process.exitCode = 2;
     }
@@ -153,7 +171,8 @@ async function setup(
   config: Config,
   fund: boolean,
 ): Promise<void> {
-  const operator = await addressFor(keys, OPERATOR_SUBJECT);
+  const backend = config.chain.backend;
+  const operator = await addressFor(keys, OPERATOR_SUBJECT, backend);
   const warehouses = await pool.query<{ id: string; code: string }>(
     `SELECT id, code FROM warehouses WHERE status = 'active' ORDER BY code`,
   );
@@ -166,7 +185,7 @@ async function setup(
       [w.id],
     );
     for (const c of custodians.rows) {
-      const address = await addressFor(keys, subjectOf.custodian(c.id));
+      const address = await addressFor(keys, subjectOf.custodian(c.id), backend);
       lines.push(`  add_custodian ${warehouseSymbol(w.code)} ${address}   (${c.full_name})`);
       toFund.push(address);
     }
@@ -175,14 +194,21 @@ async function setup(
     `SELECT id, full_name FROM verifiers WHERE status = 'active' ORDER BY created_at`,
   );
   for (const v of verifiers.rows) {
-    const address = await addressFor(keys, subjectOf.verifier(v.id));
+    const address = await addressFor(keys, subjectOf.verifier(v.id), backend);
     lines.push(`add_verifier ${address}   (${v.full_name})`);
     toFund.push(address);
   }
   const farmers = await pool.query<{ id: string }>('SELECT id FROM farmers ORDER BY created_at');
-  for (const f of farmers.rows) toFund.push(await addressFor(keys, subjectOf.farmer(f.id)));
+  for (const f of farmers.rows) {
+    toFund.push(await addressFor(keys, subjectOf.farmer(f.id), backend));
+  }
   console.log(`Contract ${config.chain.contractId}\n${lines.join('\n')}`);
   if (fund) {
+    if (backend === 'near') {
+      throw new Error(
+        '--fund is for Stellar Friendbot only; on NEAR implicit accounts are auto-funded from the operator',
+      );
+    }
     if (!/Test SDF/.test(config.chain.networkPassphrase))
       throw new Error('--fund is for Testnet only');
     for (const address of toFund) {
@@ -227,7 +253,7 @@ async function reset(pool: pg.Pool, config: Config, logger: Logger): Promise<voi
   }
   const adapters = createAdapters(config, pool, logger);
   if (!(await adapters.chain.instanceExists())) {
-    throw new Error(`contract ${contract} does not exist on ${config.chain.networkPassphrase}`);
+    throw new Error(`contract ${contract} does not exist on ${config.chain.networkId}`);
   }
   await withTransaction(pool, async (client) => {
     await client.query(
@@ -237,10 +263,10 @@ async function reset(pool: pg.Pool, config: Config, logger: Logger): Promise<voi
       [contract],
     );
     await client.query(
-      `INSERT INTO chain_deployments (contract_id, network_passphrase, rpc_url, start_ledger, status)
-       VALUES ($1, $2, $3, $4, 'current')
+      `INSERT INTO chain_deployments (chain, contract_id, network_passphrase, rpc_url, start_ledger, status)
+       VALUES ($1, $2, $3, $4, $5, 'current')
        ON CONFLICT (contract_id) DO NOTHING`,
-      [contract, config.chain.networkPassphrase, config.chain.rpcUrl, startLedger],
+      [config.chain.backend, contract, config.chain.networkId, config.chain.rpcUrl, startLedger],
     );
     await client.query(
       `INSERT INTO indexer_cursors (contract_id, start_ledger, cursor_ledger)

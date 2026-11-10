@@ -25,20 +25,22 @@ export class ChainDeploymentError extends Error {
  */
 export async function assertChainDeployment(db: Queryable, config: Config): Promise<void> {
   const { rows } = await db.query<{
+    chain: string;
     contract_id: string;
     network_passphrase: string;
     rpc_url: string;
   }>(
-    `SELECT contract_id, network_passphrase, rpc_url FROM chain_deployments WHERE status = 'current'`,
+    `SELECT chain, contract_id, network_passphrase, rpc_url FROM chain_deployments WHERE status = 'current'`,
   );
   const current = rows[0];
   if (current === undefined) {
     await db.query(
-      `INSERT INTO chain_deployments (contract_id, network_passphrase, rpc_url, start_ledger, status)
-       VALUES ($1, $2, $3, $4, 'current')`,
+      `INSERT INTO chain_deployments (chain, contract_id, network_passphrase, rpc_url, start_ledger, status)
+       VALUES ($1, $2, $3, $4, $5, 'current')`,
       [
+        config.chain.backend,
         config.chain.contractId,
-        config.chain.networkPassphrase,
+        config.chain.networkId,
         config.chain.rpcUrl,
         config.chain.startLedger,
       ],
@@ -46,8 +48,9 @@ export async function assertChainDeployment(db: Queryable, config: Config): Prom
     return;
   }
   if (
+    current.chain !== config.chain.backend ||
     current.contract_id !== config.chain.contractId ||
-    current.network_passphrase !== config.chain.networkPassphrase
+    current.network_passphrase !== config.chain.networkId
   ) {
     throw new ChainDeploymentError(
       `this database is bound to contract ${current.contract_id} on "${current.network_passphrase}", ` +

@@ -1,4 +1,3 @@
-import { scValToNative, StrKey, xdr } from '@stellar/stellar-sdk';
 import type pg from 'pg';
 
 import { addressFor, OPERATOR_SUBJECT, subjectOf } from '../chain/addresses.js';
@@ -6,11 +5,12 @@ import {
   ContractCallError,
   ContractError,
   DeadlineError,
+  LenderAuthError,
   type ChainClient,
   type ChainTxOutcome,
   type LockCall,
+  type NearOfferTxRequest,
 } from '../chain/chainClient.js';
-import { LenderAuthError } from '../chain/sorobanChainClient.js';
 import type { FarmerConfirmation } from '../confirmation/farmerConfirmation.js';
 import type { Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/transaction.js';
@@ -70,7 +70,13 @@ export interface PledgeView {
   pledge_id: string;
   deposit_id: string;
   deposit_no: number;
-  status: 'minting' | 'awaiting_lender_signature' | 'locking' | 'locked' | 'failed';
+  status:
+    | 'minting'
+    | 'awaiting_lender_signature'
+    | 'awaiting_lender_offer'
+    | 'locking'
+    | 'locked'
+    | 'failed';
   lender: string;
   kg: number;
   loan_ref: string;
@@ -79,10 +85,15 @@ export interface PledgeView {
   receipt_id: string | null;
   locked_receipt_id: string | null;
   /**
-   * What the lender must sign and return (step 2): the unsigned
+   * What the lender must sign and return (step 2 on Stellar): the unsigned
    * SorobanAuthorizationEntry, as base64 XDR, and the ledger it is valid to.
    */
   lender_authorization: { entry_xdr: string; valid_until_ledger: number } | null;
+  /**
+   * What the lender's wallet must submit (step 2 on NEAR): an `offer_lock`
+   * function-call transaction request.
+   */
+  lender_tx_request?: NearOfferTxRequest | null;
   failure: string | null;
   /** Why it failed, machine-readable: e.g. `books_not_anchored`. */
   failure_code: string | null;
@@ -116,7 +127,7 @@ const PLEDGE_SELECT = `
     FROM pledges p JOIN deposits d ON d.deposit_id = p.deposit_id`;
 
 function toView(row: PledgeRow): PledgeView {
-  return {
+  const view: PledgeView = {
     pledge_id: row.id,
     deposit_id: row.deposit_id,
     deposit_no: Number(row.deposit_no),
@@ -138,6 +149,13 @@ function toView(row: PledgeRow): PledgeView {
     failure: row.failure,
     failure_code: row.failure_code,
   };
+  if (row.status === 'awaiting_lender_offer') {
+    view.lender_tx_request =
+      row.lender_auth_entry_xdr !== null
+        ? (JSON.parse(row.lender_auth_entry_xdr) as NearOfferTxRequest)
+        : null;
+  }
+  return view;
 }
 
 /**
@@ -186,7 +204,7 @@ export class PledgeService {
       const replay = await this.replay(pledgeId, depositId);
       if (replay !== null) return replay;
     }
-    const errors = validatePledge(input, this.clock());
+    const errors = validatePledge(input, this.clock(), this.chain);
     if (errors.length > 0) throw new ValidationError('Pledge is invalid', { details: errors });
     if (!this.chain.enabled) {
       throw new ConflictError('CHAIN_ENABLED=false: pledges need the receipt contract', {
@@ -499,7 +517,7 @@ export class PledgeService {
       throw err;
     }
     if (outcome.status === 'success') {
-      const lockedId = decodeU64(outcome.returnValueXdr);
+      const lockedId = decodeReturnU64(outcome);
       await this.pool.query(
         `UPDATE pledges SET status = 'locked', locked_receipt_id = $2, failure = NULL WHERE id = $1`,
         [pledgeId, lockedId],
@@ -507,6 +525,64 @@ export class PledgeService {
     } else if (outcome.status === 'failed' || outcome.status === 'expired') {
       await this.pool.query(
         `UPDATE pledges SET status = 'awaiting_lender_signature', failure = $2 WHERE id = $1`,
+        [pledgeId, outcome.error ?? outcome.status],
+      );
+    }
+    return this.get(pledgeId);
+  }
+
+  /**
+   * Step 2 on NEAR: the lender's `offer_lock` transaction hash. Verified on
+   * finalized RPC as the lender's own `offer_lock` call over this lock, then
+   * matched by the farmer's `accept_lock`.
+   */
+  async submitLenderOffer(pledgeId: string, lenderOfferTxHash: string): Promise<PledgeView> {
+    const row = await this.find(this.pool, pledgeId);
+    if (row === null) throw new NotFoundError('Pledge not found');
+    if (row.status !== 'awaiting_lender_offer' || row.receipt_id === null) {
+      throw new ConflictError(`This pledge is ${row.status}`, {
+        code: 'pledge_not_awaiting_lender',
+      });
+    }
+    if (await chainHalted(this.pool)) {
+      throw new ConflictError('Chain writers are halted: a Testnet reset is unresolved', {
+        code: 'chain_halted',
+      });
+    }
+    await this.pool.query(
+      `UPDATE pledges SET status = 'locking', lender_offer_tx_hash = $2 WHERE id = $1`,
+      [pledgeId, lenderOfferTxHash],
+    );
+    let outcome: ChainTxOutcome;
+    try {
+      outcome = await this.chain.submitLock(
+        this.pool,
+        lockCallOf(row),
+        lenderOfferTxHash,
+        subjectOf.farmer(row.farmer_id),
+        `lock:${pledgeId}`,
+      );
+    } catch (err) {
+      await this.pool.query(
+        `UPDATE pledges SET status = 'awaiting_lender_offer', failure = $2 WHERE id = $1`,
+        [pledgeId, errText(err)],
+      );
+      if (err instanceof LenderAuthError) {
+        throw new ValidationError('Lender offer is invalid', {
+          details: [domainError('invalid_lender', 'txHash', err.message)],
+        });
+      }
+      throw err;
+    }
+    if (outcome.status === 'success') {
+      const lockedId = decodeReturnU64(outcome);
+      await this.pool.query(
+        `UPDATE pledges SET status = 'locked', locked_receipt_id = $2, failure = NULL WHERE id = $1`,
+        [pledgeId, lockedId],
+      );
+    } else if (outcome.status === 'failed' || outcome.status === 'expired') {
+      await this.pool.query(
+        `UPDATE pledges SET status = 'awaiting_lender_offer', failure = $2 WHERE id = $1`,
         [pledgeId, outcome.error ?? outcome.status],
       );
     }
@@ -570,7 +646,7 @@ export class PledgeService {
       [mintId, outcome.id],
     );
     if (outcome.status === 'success') {
-      const receiptId = decodeU64(outcome.returnValueXdr);
+      const receiptId = decodeReturnU64(outcome);
       const pledge = await withTransaction(this.pool, async (client) => {
         const mint = await client.query<{ deposit_id: string; pledge_id: string }>(
           `UPDATE mint_requests SET status = 'minted', receipt_id = $2, resolved_at = now()
@@ -611,19 +687,31 @@ export class PledgeService {
   private async prepareLock(pledgeId: string): Promise<void> {
     const row = await this.find(this.pool, pledgeId);
     if (row === null || row.receipt_id === null) return;
+    const waitingStatus =
+      this.chain.backend === 'near' ? 'awaiting_lender_offer' : 'awaiting_lender_signature';
     try {
       const prepared = await this.chain.prepareLock(lockCallOf(row));
-      await this.pool.query(
-        `UPDATE pledges SET status = 'awaiting_lender_signature', lender_auth_entry_xdr = $2,
-                lender_auth_valid_until_ledger = $3
-          WHERE id = $1 AND status = 'minting'`,
-        [pledgeId, prepared.lenderEntryXdr, prepared.validUntilLedger],
-      );
+      if (prepared.kind === 'near_offer') {
+        await this.pool.query(
+          `UPDATE pledges SET status = 'awaiting_lender_offer', lender_auth_entry_xdr = $2,
+                  lender_auth_valid_until_ledger = $3
+            WHERE id = $1 AND status = 'minting'`,
+          [pledgeId, JSON.stringify(prepared.txRequest), prepared.txRequest.args.expires_at],
+        );
+      } else {
+        await this.pool.query(
+          `UPDATE pledges SET status = 'awaiting_lender_signature', lender_auth_entry_xdr = $2,
+                  lender_auth_valid_until_ledger = $3
+            WHERE id = $1 AND status = 'minting'`,
+          [pledgeId, prepared.lenderEntryXdr, prepared.validUntilLedger],
+        );
+      }
     } catch (err) {
-      await this.pool.query(
-        `UPDATE pledges SET status = 'awaiting_lender_signature', failure = $2 WHERE id = $1`,
-        [pledgeId, `the lock could not be prepared: ${errText(err)}`],
-      );
+      await this.pool.query(`UPDATE pledges SET status = $2, failure = $3 WHERE id = $1`, [
+        pledgeId,
+        waitingStatus,
+        `the lock could not be prepared: ${errText(err)}`,
+      ]);
     }
   }
 
@@ -683,7 +771,8 @@ export class PledgeService {
         txHash: outcome.txHash,
         status: 'success',
         contractError: null,
-        returnValueXdr: nativeU64Xdr(event.receipt_id),
+        returnValue: event.receipt_id,
+        returnValueXdr: event.receipt_id,
         ledger: Number(event.ledger),
         error: null,
       });
@@ -853,14 +942,16 @@ export class PledgeService {
 
   /** True if `address` is the operator, or any farmer's, custodian's or verifier's key. */
   private async isManagedAddress(address: string): Promise<boolean> {
-    if ((await addressFor(this.keys, OPERATOR_SUBJECT)) === address) return true;
+    if ((await addressFor(this.keys, OPERATOR_SUBJECT, this.chain.backend)) === address) {
+      return true;
+    }
     const { rows } = await this.pool.query<{ subject: string }>(
       `SELECT 'farmer:' || id AS subject FROM farmers
        UNION ALL SELECT 'custodian:' || id FROM custodians
        UNION ALL SELECT 'verifier:' || id FROM verifiers`,
     );
     for (const { subject } of rows) {
-      if ((await addressFor(this.keys, subject)) === address) return true;
+      if ((await addressFor(this.keys, subject, this.chain.backend)) === address) return true;
     }
     return false;
   }
@@ -882,10 +973,18 @@ function lockCallOf(row: PledgeRow): LockCall {
   };
 }
 
-function validatePledge(input: PledgeInput, now: Date): DomainError[] {
+function validatePledge(input: PledgeInput, now: Date, chain: ChainClient): DomainError[] {
   const errors: DomainError[] = [];
-  if (!StrKey.isValidEd25519PublicKey(input.lender)) {
-    errors.push(domainError('invalid_lender', 'lender', 'lender must be a Stellar account (G…)'));
+  if (!chain.validateAccount(input.lender)) {
+    errors.push(
+      domainError(
+        'invalid_lender',
+        'lender',
+        chain.backend === 'near'
+          ? 'lender must be a valid NEAR account ID'
+          : 'lender must be a Stellar account (G…)',
+      ),
+    );
   }
   if (!Number.isSafeInteger(input.kg) || input.kg <= 0) {
     errors.push(domainError('invalid_pledge_kg', 'kg', 'kg must be a whole number of kg above 0'));
@@ -903,10 +1002,6 @@ function validatePledge(input: PledgeInput, now: Date): DomainError[] {
     );
   }
   return errors;
-}
-
-function nativeU64Xdr(value: string): string {
-  return xdr.ScVal.scvU64(xdr.Uint64.fromString(value)).toXdr('base64');
 }
 
 /** missing: no anchor on-chain; stale: not the latest anchored day; moved_since_anchor: the lot moved after it. */
@@ -949,9 +1044,15 @@ function booksNotAnchored(
   });
 }
 
-function decodeU64(valueXdr: string | null): string {
-  if (valueXdr === null) throw new Error('the call returned no value');
-  return String(scValToNative(xdr.ScVal.fromXdr(valueXdr, 'base64')) as bigint);
+function decodeReturnU64(outcome: ChainTxOutcome): string {
+  const rv = outcome.returnValue;
+  if (typeof rv === 'string' || typeof rv === 'number' || typeof rv === 'bigint') {
+    return String(rv);
+  }
+  if (outcome.returnValueXdr !== null) {
+    return outcome.returnValueXdr;
+  }
+  throw new Error('the call returned no value');
 }
 
 function errText(err: unknown): string {

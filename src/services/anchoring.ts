@@ -291,6 +291,7 @@ export class AnchoringService {
           client,
           this.keys,
           await unbookedLotMovements(client, warehouseId, cutoff),
+          this.chain.backend,
         );
         const movements = await client.query<EntryRow>(
           `SELECT b.id, b.entry_type, b.kind, b.record_kind, b.deposit_no, b.content, b.salt,
@@ -321,7 +322,7 @@ export class AnchoringService {
             index,
             salt: row.salt.toString('hex'),
           } as BookEntryJson;
-          return { row, json, hash: entryHash(json) };
+          return { row, json, hash: entryHash(json, this.chain.backend) };
         });
         const tree = buildTree(placed.map((p) => p.hash));
 
@@ -418,6 +419,7 @@ export class AnchoringService {
     const custodian = await addressFor(
       this.keys,
       await this.anchoringCustodian(warehouseId, symbol),
+      this.chain.backend,
     );
     const content: Omit<LeafJson, 'day' | 'index' | 'salt'> = {
       version: 1,
@@ -491,7 +493,7 @@ export class AnchoringService {
     );
     const out: EntryRow[] = [];
     for (const row of rows) {
-      const id = await lotIdentity(this.keys, row);
+      const id = await lotIdentity(this.keys, row, this.chain.backend);
       const receiptId = row.chain_receipt_id === null ? 0 : Number(row.chain_receipt_id);
       const content: Omit<LeafJson, 'day' | 'index' | 'salt'> = {
         version: 1,
@@ -769,7 +771,10 @@ export class AnchoringService {
     const onChain = new Set(registered.rows.map((row) => row.address));
     if (sentinelAddress !== null) {
       for (const { id } of custodians.rows) {
-        if ((await addressFor(this.keys, subjectOf.custodian(id))) === sentinelAddress) {
+        if (
+          (await addressFor(this.keys, subjectOf.custodian(id), this.chain.backend)) ===
+          sentinelAddress
+        ) {
           return subjectOf.custodian(id);
         }
       }
@@ -783,7 +788,7 @@ export class AnchoringService {
       });
     }
     for (const { id } of custodians.rows) {
-      if (onChain.has(await addressFor(this.keys, subjectOf.custodian(id)))) {
+      if (onChain.has(await addressFor(this.keys, subjectOf.custodian(id), this.chain.backend))) {
         return subjectOf.custodian(id);
       }
     }

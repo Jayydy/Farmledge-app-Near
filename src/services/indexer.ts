@@ -1,74 +1,22 @@
-import { scValToNative, xdr } from '@stellar/stellar-sdk';
 import type pg from 'pg';
 
-import type { ChainClient, ChainEvent } from '../chain/chainClient.js';
+import type {
+  ChainClient,
+  ChainEvent,
+  DecodedEvent,
+  EventJson as Json,
+} from '../chain/chainClient.js';
+import { decodeSorobanEvent as decodeEvent } from '../chain/sorobanChainClient.js';
 import type { Queryable } from '../db/pool.js';
 import { withTransaction } from '../db/transaction.js';
 import { nextHead, ZERO_HEAD } from '../domain/merkle.js';
 import type { Logger } from '../logger.js';
 import type { AlertService } from './alerts.js';
 
+export { decodeEvent, type DecodedEvent };
+
 /** events.md requirement 2: page when indexing is more than ~24 h (17,280 ledgers) behind. */
 export const MAX_LAG_LEDGERS = 17_280;
-
-/** Topic fields after the event name, per event (docs/events.md; contract events.rs). */
-const TOPICS: Record<string, readonly string[]> = {
-  anchored: ['warehouse_id'],
-  minted: ['receipt_id', 'warehouse_id'],
-  preclaimed: ['warehouse_id'],
-  split: ['parent_id'],
-  exited: ['receipt_id', 'warehouse_id'],
-  revoked: ['receipt_id', 'warehouse_id'],
-  ttl_extended: ['receipt_id', 'warehouse_id'],
-  locked: ['receipt_id', 'lender'],
-  unlocked: ['receipt_id', 'lender'],
-  due_extended: ['receipt_id', 'lender'],
-  recovery_started: ['receipt_id', 'lender', 'warehouse_id'],
-  recovery_completed: ['receipt_id', 'lender'],
-  settlement_recorded: ['sale_id', 'lender'],
-  warehouse_added: ['warehouse_id'],
-  warehouse_removed: ['warehouse_id'],
-  custodian_added: ['warehouse_id'],
-  custodian_removed: ['warehouse_id'],
-  verifier_added: ['verifier'],
-  verifier_removed: ['verifier'],
-  recovery_operator_added: ['operator'],
-  recovery_operator_removed: ['operator'],
-};
-
-type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
-
-/** A native ScVal value as JSON: u64 and i128 as decimal strings, bytes as hex. */
-function toJson(value: unknown): Json {
-  if (typeof value === 'bigint') return value.toString();
-  if (value === undefined || value === null) return null;
-  if (Buffer.isBuffer(value) || value instanceof Uint8Array)
-    return Buffer.from(value).toString('hex');
-  if (Array.isArray(value)) return value.map(toJson);
-  if (typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, toJson(v)]));
-  }
-  return value as Json;
-}
-
-export interface DecodedEvent {
-  name: string;
-  /** Every field, topics and data, by name. */
-  fields: Record<string, Json>;
-  topics: Json[];
-}
-
-export function decodeEvent(topicXdr: readonly string[], valueXdr: string): DecodedEvent {
-  const topics = topicXdr.map((t) => toJson(scValToNative(xdr.ScVal.fromXdr(t, 'base64'))));
-  const name = typeof topics[0] === 'string' ? topics[0] : JSON.stringify(topics[0]);
-  const data = toJson(scValToNative(xdr.ScVal.fromXdr(valueXdr, 'base64')));
-  const fields: Record<string, Json> =
-    typeof data === 'object' && data !== null && !Array.isArray(data) ? { ...data } : {};
-  (TOPICS[name] ?? []).forEach((field, i) => {
-    fields[field] = topics[i + 1] ?? null;
-  });
-  return { name, fields, topics };
-}
 
 const str = (v: Json | undefined): string | null =>
   v === null || v === undefined ? null : typeof v === 'object' ? JSON.stringify(v) : String(v);
@@ -162,7 +110,7 @@ export class IndexerService {
         .filter((e) => e.ledger >= from && e.ledger <= through)
         .sort(eventOrder);
       for (const event of ordered) {
-        const decoded = decodeEvent(event.topicXdr, event.valueXdr);
+        const decoded = event.decoded;
         const result = await client.query(
           `INSERT INTO events_archive (event_id, contract_id, ledger, ledger_closed_at, tx_hash,
                                        tx_index, op_index, event_index, event_type, topics, value,
@@ -182,7 +130,7 @@ export class IndexerService {
             JSON.stringify(decoded.topics),
             JSON.stringify(decoded.fields),
             event.topicXdr,
-            event.valueXdr,
+            event.valueXdr || event.raw,
             event.inSuccessfulContractCall,
           ],
         );
@@ -394,11 +342,12 @@ export class IndexerService {
         await client.query(`DELETE FROM ${table} WHERE contract_id = $1`, [contractId]);
       }
       const { rows } = await client.query<{
-        topic_xdr: string[];
-        value_xdr: string;
+        event_type: string;
+        topics: Json[];
+        value: Record<string, Json>;
         ledger: string;
       }>(
-        `SELECT topic_xdr, value_xdr, ledger FROM events_archive
+        `SELECT event_type, topics, value, ledger FROM events_archive
           WHERE contract_id = $1 AND in_successful_contract_call
           ORDER BY ledger, tx_index, op_index, event_index`,
         [contractId],
@@ -407,7 +356,7 @@ export class IndexerService {
         await applyEvent(
           client,
           contractId,
-          decodeEvent(row.topic_xdr, row.value_xdr),
+          { name: row.event_type, fields: row.value, topics: row.topics },
           Number(row.ledger),
           null,
         );
@@ -678,6 +627,8 @@ export async function applyEvent(
     case 'ttl_extended':
     case 'due_extended':
     case 'settlement_recorded':
+    case 'mint_proposed':
+    case 'lock_offered':
       return;
     default:
       await alerts?.raise({

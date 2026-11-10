@@ -27,9 +27,21 @@ const signatureBody = z.object({
   signed_entry_xdr: z.string(),
 });
 
+const offerBody = z.union([
+  z.object({
+    /** The NEAR `offer_lock` transaction hash submitted by the lender's wallet. */
+    txHash: z.string().min(1),
+  }),
+  z.object({
+    /** Snake-case alias for the lender's `offer_lock` transaction hash. */
+    lender_offer_tx_hash: z.string().min(1),
+  }),
+]);
+
 /**
  * POST /pledges                          step 1: freeze, mint, prepare the lock; returns what the lender signs
- * POST /pledges/:id/lender-signature     step 2: the lender's signed authorisation; submits the lock
+ * POST /pledges/:id/lender-signature     step 2 (Stellar): the lender's signed authorisation; submits the lock
+ * POST /pledges/:id/lender-offer         step 2 (NEAR): the lender's offer_lock tx hash; verifies and submits accept_lock
  * GET  /pledges/:id                      one pledge
  *
  * Gated by LENDING_ENABLED, like the rest of lending.
@@ -85,6 +97,16 @@ export function pledgesRouter(pledges: PledgeService, enabled: boolean): Router 
     const pledge = await pledges.submitLenderSignature(
       uuidParam(req.params.pledgeId, 'Pledge'),
       body.signed_entry_xdr,
+    );
+    res.json({ pledge });
+  });
+
+  router.post('/pledges/:pledgeId/lender-offer', async (req, res) => {
+    const body = orThrow(checkShape(offerBody, req.body), 'Lender offer is invalid');
+    const txHash = 'txHash' in body ? body.txHash : body.lender_offer_tx_hash;
+    const pledge = await pledges.submitLenderOffer(
+      uuidParam(req.params.pledgeId, 'Pledge'),
+      txHash,
     );
     res.json({ pledge });
   });
