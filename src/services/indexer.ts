@@ -485,8 +485,8 @@ export async function applyEvent(
         [
           contractId,
           str(f.parent_id),
-          str(f.remainder_weight_kg),
-          Number(f.remainder_bag_count),
+          str(f.remainder_weight_kg ?? f.remaining_weight_kg),
+          Number(f.remainder_bag_count ?? f.remaining_bag_count),
           ledger,
         ],
       );
@@ -495,8 +495,9 @@ export async function applyEvent(
                                      deposit_no, deposit_id, owner, status, weight_kg, bag_count,
                                      initial_weight_kg, weight_source, lender, loan_ref,
                                      anchor_day, leaf_hash, last_event_ledger)
-         SELECT contract_id, $3, receipt_id, warehouse_symbol, deposit_no, deposit_id, $4, $5, $6,
-                $7, $6, weight_source, $8, loan_ref, anchor_day, leaf_hash, $9
+         SELECT contract_id, $3, receipt_id, warehouse_symbol, deposit_no, deposit_id,
+                COALESCE($4, owner), COALESCE(NULLIF($5, ''), status), $6,
+                $7, $6, weight_source, COALESCE($8, lender), loan_ref, anchor_day, leaf_hash, $9
            FROM chain_receipts WHERE contract_id = $1 AND receipt_id = $2`,
         [
           contractId,
@@ -561,7 +562,7 @@ export async function applyEvent(
           str(f.prev_head),
           str(f.head),
           str(f.custodian),
-          str(f.anchored_at),
+          str(f.anchored_at) ?? '0',
           ledger,
         ],
       );

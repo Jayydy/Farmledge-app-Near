@@ -21,13 +21,15 @@ interface PledgeBody {
  * contract refuses it in simulation, on-ledger, or resolve-pending finds it
  * later. Never a generic failure.
  */
-describe('a mint blocked by a missing or stale anchor reports that cause', () => {
-  let h: ChainHarness;
-  let fake: FakeChain;
-  beforeEach(async () => {
-    h = await startChainHarness({ start: middayOf(DAY) });
-    fake = h.chain as FakeChain;
-  });
+describe.each(['stellar', 'near'] as const)(
+  'a mint blocked by a missing or stale anchor reports that cause (%s)',
+  (backend) => {
+    let h: ChainHarness;
+    let fake: FakeChain;
+    beforeEach(async () => {
+      h = await startChainHarness({ start: middayOf(DAY), backend });
+      fake = h.chain as FakeChain;
+    });
   afterEach(async () => {
     await h.close();
   });
@@ -87,8 +89,13 @@ describe('a mint blocked by a missing or stale anchor reports that cause', () =>
     // RPC now reports the transaction failed on-ledger with StaleLeaf.
     await h.pool.query(
       `UPDATE chain_transactions SET status = 'failed', resolved_at = now(),
-              error = 'failed on-ledger: Error(Contract, #51) (3 diagnostic events)'
-        WHERE purpose = 'mint'`,
+              error = $1
+        WHERE purpose IN ('mint', 'mint_propose', 'mint_approve')`,
+      [
+        backend === 'near'
+          ? 'failed on-chain: E51: {"ActionError":{"kind":{"FunctionCallError":{"ExecutionError":"E51:StaleLeaf"}}}}'
+          : 'failed on-ledger: Error(Contract, #51) (3 diagnostic events)',
+      ],
     );
     h.clock.advance((MINT_MAX_TIME_SECONDS - 60) * 1000);
     await h.pledges.resolvePending();
@@ -102,4 +109,5 @@ describe('a mint blocked by a missing or stale anchor reports that cause', () =>
     );
     expect((await lotState(h, lot.depositId))?.frozen_for_mint).toBeNull();
   });
-});
+  },
+);

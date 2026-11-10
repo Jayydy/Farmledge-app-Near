@@ -572,5 +572,105 @@ describe('NearChainClient (test/chain/near/client.test.ts)', () => {
         closedAfterMaxTimeLedger: 185_000_000,
       });
     });
+
+    it('maps E72:PendingExpired on-chain failure to the INV-1 expired outcome', async () => {
+      onSendTx = (_b64, decoded) => {
+        const txHash = baseEncode(
+          createHash('sha256').update(decoded.transaction.encode()).digest(),
+        );
+        const fn = decoded.transaction.actions[0]?.functionCall;
+        if (fn?.methodName === 'mint_approve') {
+          txStatuses.set(txHash, {
+            status: {
+              Failure: {
+                ActionError: {
+                  index: 0,
+                  kind: {
+                    FunctionCallError: {
+                      ExecutionError: "Smart contract panicked: E72:PendingExpired",
+                    },
+                  },
+                },
+              },
+            },
+            transaction: {
+              hash: txHash,
+              signer_id: decoded.transaction.signerId,
+              public_key: decoded.transaction.publicKey.toString(),
+              nonce: Number(decoded.transaction.nonce),
+              receiver_id: decoded.transaction.receiverId,
+              actions: [],
+            },
+            transaction_outcome: {
+              id: txHash,
+              block_hash: BLOCK_HASH,
+              outcome: {
+                executor_id: decoded.transaction.signerId,
+                logs: [],
+                receipt_ids: [],
+                status: { SuccessValue: '' },
+              },
+            },
+            receipts_outcome: [],
+          });
+        } else {
+          txStatuses.set(txHash, {
+            status: { SuccessValue: '' },
+            transaction: {
+              hash: txHash,
+              signer_id: decoded.transaction.signerId,
+              public_key: decoded.transaction.publicKey.toString(),
+              nonce: Number(decoded.transaction.nonce),
+              receiver_id: decoded.transaction.receiverId,
+              actions: [],
+            },
+            transaction_outcome: {
+              id: txHash,
+              block_hash: BLOCK_HASH,
+              outcome: {
+                executor_id: decoded.transaction.signerId,
+                logs: [],
+                receipt_ids: [],
+                status: { SuccessValue: '' },
+              },
+            },
+            receipts_outcome: [],
+          });
+        }
+        return Promise.resolve();
+      };
+
+      const c = makeClient();
+      const custodianSubject = subjectOf.custodian('c-exp');
+      const verifierSubject = subjectOf.verifier('v-exp');
+      const leaf = buildLeaf(
+        await addressFor(keys, subjectOf.farmer('f-exp'), 'near'),
+        await addressFor(keys, custodianSubject, 'near'),
+        await addressFor(keys, verifierSubject, 'near'),
+      );
+      const outcome = await c.mintFromAnchor(pool, {
+        custodianSubject,
+        verifierSubject,
+        leaf,
+        proof: [],
+        subject: 'mint:pending-expired-1',
+        maxTimeSeconds: 300,
+        notAfter: NOW + 300,
+      });
+      expect(outcome.status).toBe('expired');
+      expect(outcome.contractError).toBe(ContractError.PendingExpired);
+    });
+
+    it('fundSubject() transfers operatorFundYocto once per unfunded implicit account', async () => {
+      const c = makeClient(100_000_000_000_000_000_000_000n);
+      const subject = subjectOf.custodian('c-fund-cli');
+      const first = await c.fundSubject(subject);
+      expect(first.funded).toBe(true);
+      expect(sentEnvelopes).toHaveLength(1);
+
+      const second = await c.fundSubject(subject);
+      expect(second.funded).toBe(false);
+      expect(sentEnvelopes).toHaveLength(1);
+    });
   });
 });

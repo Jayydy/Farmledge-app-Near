@@ -13,18 +13,21 @@ import { DAY } from './helpers.js';
  * is retried there at most hourly while a day is due. A daily-only check
  * would first notice a failed anchor about 24 h later.
  */
-describe('INV-5: missed anchors are caught and retried between daily runs', () => {
-  let h: ChainHarness;
-  let fake: FakeChain;
-  beforeEach(async () => {
-    // Only the lot's warehouse is due: the contract registers the other
-    // later, so the injected failures hit the anchor under test.
-    h = await startChainHarness({
-      start: middayOf(DAY),
-      onChain: { otherWarehouseId: middayOf(DAY + 30) },
+describe.each(['stellar', 'near'] as const)(
+  'INV-5: missed anchors are caught and retried between daily runs (%s)',
+  (backend) => {
+    let h: ChainHarness;
+    let fake: FakeChain;
+    beforeEach(async () => {
+      // Only the lot's warehouse is due: the contract registers the other
+      // later, so the injected failures hit the anchor under test.
+      h = await startChainHarness({
+        start: middayOf(DAY),
+        backend,
+        onChain: { otherWarehouseId: middayOf(DAY + 30) },
+      });
+      fake = h.chain as FakeChain;
     });
-    fake = h.chain as FakeChain;
-  });
   afterEach(async () => {
     await h.close();
   });
@@ -77,4 +80,5 @@ describe('INV-5: missed anchors are caught and retried between daily runs', () =
       severity: 'urgent',
     });
   });
-});
+  },
+);

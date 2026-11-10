@@ -4,11 +4,18 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { addressFor, OPERATOR_SUBJECT, subjectOf } from '../../src/chain/addresses.js';
+import type { NearOfferTxRequest } from '../../src/chain/chainClient.js';
 import { LenderAuthError, SorobanChainClient } from '../../src/chain/sorobanChainClient.js';
 import { LocalDevKeyService } from '../../src/keys/localDevKeyService.js';
 import { createLogger } from '../../src/logger.js';
 import { middayOf, startChainHarness, type ChainHarness } from '../helpers/chainHarness.js';
-import { FAKE_CONTRACT, lenderEntry, lenderSigns, type FakeChain } from '../helpers/fakeChain.js';
+import {
+  FAKE_CONTRACT,
+  lenderEntry,
+  lenderSigns,
+  type FakeChain,
+  type FakeNearChain,
+} from '../helpers/fakeChain.js';
 import { anchoredLot, DAY, pledge } from './helpers.js';
 
 interface PledgeBody {
@@ -181,5 +188,66 @@ describe('D31 no code path signs for a lender', () => {
       ),
     ).rejects.toBeInstanceOf(LenderAuthError);
     expect(signed).toEqual([]);
+  });
+
+  it('enforces D31 on NEAR: refuses Farmledge-held implicit accounts as lender and signs lock_accept only after a verified lender offer_lock tx', async () => {
+    const nearHarness = await startChainHarness({ start: middayOf(DAY), backend: 'near' });
+    try {
+      const nearFake = nearHarness.chain as FakeNearChain;
+      const lot = await anchoredLot(nearHarness);
+      for (const subject of [
+        OPERATOR_SUBJECT,
+        subjectOf.farmer(nearHarness.fixtures.farmerId),
+        subjectOf.custodian(nearHarness.fixtures.custodianId),
+      ]) {
+        const res = await pledge(nearHarness, lot.depositId, {
+          lender: await addressFor(nearHarness.adapters.keys, subject, 'near'),
+        });
+        expect(res.status).toBe(400);
+        expect(res.body).toMatchObject({
+          error: { details: [expect.objectContaining({ code: 'invalid_lender' })] },
+        });
+      }
+      expect(nearFake.receipts.size).toBe(0);
+
+      const lender = 'lender-bank.testnet';
+      const pledged = await pledge(nearHarness, lot.depositId, { lender });
+      expect(pledged.status).toBe(201);
+      const body = pledged.body as {
+        pledge: {
+          pledge_id: string;
+          status: string;
+          lender_tx_request: NearOfferTxRequest;
+        };
+      };
+      expect(body.pledge.status).toBe('awaiting_lender_offer');
+
+      // Wrong signer offer_lock: refused before lock_accept is signed.
+      const impostorTx = nearFake.recordLenderOffer({
+        signerId: 'impostor.testnet',
+        txRequest: body.pledge.lender_tx_request,
+      });
+      const rejected = await request(nearHarness.app)
+        .post(`/pledges/${body.pledge.pledge_id}/lender-offer`)
+        .send({ txHash: impostorTx });
+      expect(rejected.status).toBe(400);
+      expect(nearFake.signedFor.filter((s) => s.method === 'lock_accept')).toEqual([]);
+
+      // Valid lender offer_lock: accepted and lock_accept signed only by the farmer.
+      const validOfferTx = nearFake.recordLenderOffer({
+        signerId: lender,
+        txRequest: body.pledge.lender_tx_request,
+      });
+      const locked = await request(nearHarness.app)
+        .post(`/pledges/${body.pledge.pledge_id}/lender-offer`)
+        .send({ txHash: validOfferTx });
+      expect(locked.status).toBe(200);
+      expect(locked.body).toMatchObject({ pledge: { status: 'locked' } });
+      expect(nearFake.signedFor.filter((s) => s.method === 'lock')).toEqual([
+        { method: 'lock', subject: subjectOf.farmer(nearHarness.fixtures.farmerId) },
+      ]);
+    } finally {
+      await nearHarness.close();
+    }
   });
 });

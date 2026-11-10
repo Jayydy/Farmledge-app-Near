@@ -500,6 +500,24 @@ export class FakeNearChain extends FakeChain {
     return txHash;
   }
 
+  recordLenderOffer(input: {
+    signerId: string;
+    txRequest: {
+      receiverId: string;
+      methodName: string;
+      args: Record<string, unknown>;
+    };
+    failed?: boolean;
+  }): string {
+    return this.recordOfferLock({
+      signerId: input.signerId,
+      receiverId: input.txRequest.receiverId,
+      method: input.txRequest.methodName,
+      args: input.txRequest.args,
+      ...(input.failed === undefined ? {} : { failed: input.failed }),
+    });
+  }
+
   override prepareLock(call: LockCall): Promise<PreparedLock> {
     const receipt = this.receipts.get(call.receiptId.toString());
     if (receipt === undefined) {
@@ -598,7 +616,11 @@ function outcome(row: {
   error?: string | null;
 }): ChainTxOutcome {
   // As the real client: a settled failure carries the contract's error code.
-  const code = row.status === 'failed' ? /#(\d+)/.exec(row.error ?? '')?.[1] : undefined;
+  const match =
+    row.status === 'failed' || row.status === 'expired'
+      ? /(?:#(\d+)|\bE(\d+)\b)/.exec(row.error ?? '')
+      : null;
+  const code = match?.[1] ?? match?.[2];
   return {
     id: row.id,
     txHash: row.tx_hash,

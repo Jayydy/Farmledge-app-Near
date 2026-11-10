@@ -5,19 +5,15 @@ import { middayOf, startChainHarness, type ChainHarness } from '../helpers/chain
 import type { FakeChain } from '../helpers/fakeChain.js';
 import { anchoredLot, DAY, lotState, pledge, sqlError } from './helpers.js';
 
-const OLD_CONTRACT = 'CDLSGBNISQ7F3ROSEE5MHAZEZYNUV5LOGQA2EWTP4BPODLQT4G2LZJW3';
-
-/**
- * INV-2. Pre-claim gate: no mint before the pre-claim list is complete.
- * Dormant on Testnet (no predecessor), live code all the same: the gate is
- * always verified, even when empty, and never opens without a recorded
- * verification (protocol #10).
- */
-describe('INV-2 the pre-claim gate', () => {
+describe.each(['stellar', 'near'] as const)('INV-2 the pre-claim gate (%s)', (backend) => {
+  const OLD_CONTRACT =
+    backend === 'near'
+      ? 'old-receipt.farmledge.testnet'
+      : 'CDLSGBNISQ7F3ROSEE5MHAZEZYNUV5LOGQA2EWTP4BPODLQT4G2LZJW3';
   let h: ChainHarness;
   let fake: FakeChain;
   beforeEach(async () => {
-    h = await startChainHarness({ start: middayOf(DAY) });
+    h = await startChainHarness({ start: middayOf(DAY), backend });
     fake = h.chain as FakeChain;
   });
   afterEach(async () => {
