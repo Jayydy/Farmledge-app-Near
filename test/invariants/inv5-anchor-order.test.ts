@@ -26,7 +26,7 @@ describe('INV-5 anchor daily, in order, never skipping', () => {
     fake = h.chain as FakeChain;
   });
   afterEach(async () => {
-    await h.close();
+    await (h as ChainHarness | undefined)?.close();
   });
 
   it('closes days strictly in order and refuses to skip one (service and database)', async () => {

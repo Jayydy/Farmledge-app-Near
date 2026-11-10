@@ -20,7 +20,7 @@ describe.each(['stellar', 'near'] as const)('INV-1 freshness: the mint freeze (%
     fake = h.chain as FakeChain;
   });
   afterEach(async () => {
-    await h.close();
+    await (h as ChainHarness | undefined)?.close();
   });
 
   it('refuses to mint when the lot moved after the anchored day’s cutoff (PledgeService freeze check)', async () => {

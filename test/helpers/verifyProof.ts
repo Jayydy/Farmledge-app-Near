@@ -8,14 +8,18 @@ import path from 'node:path';
  * out farmledge-verify at a pinned commit and sets FARMLEDGE_VERIFY_PROOF.
  * Locally, a sibling checkout of either repo is found.
  */
-export function verifyProofScript(): string {
+export function findVerifyProofScript(): string | null {
   const candidates = [
     process.env.FARMLEDGE_VERIFY_PROOF,
     path.resolve(import.meta.dirname, '../../../farmledge-protocol/scripts/verify_proof.py'),
     path.resolve(import.meta.dirname, '../../../farmledge-verify/scripts/verify_proof.py'),
   ];
-  const found = candidates.find((c): c is string => c !== undefined && existsSync(c));
-  if (found === undefined) {
+  return candidates.find((c): c is string => c !== undefined && existsSync(c)) ?? null;
+}
+
+export function verifyProofScript(): string {
+  const found = findVerifyProofScript();
+  if (found === null) {
     throw new Error(
       'verify_proof.py not found: set FARMLEDGE_VERIFY_PROOF, or check out farmledge-protocol or farmledge-verify beside this repo',
     );

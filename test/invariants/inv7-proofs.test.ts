@@ -38,7 +38,7 @@ describe.each(['stellar', 'near'] as const)('INV-7 every farmer gets their proof
     fake = h.chain as FakeChain;
   });
   afterEach(async () => {
-    await h.close();
+    await (h as ChainHarness | undefined)?.close();
   });
 
   it('carries the deposit leaf and salt on the counter slip, before any anchor', async () => {

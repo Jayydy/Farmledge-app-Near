@@ -29,7 +29,7 @@ describe.each(['stellar', 'near'] as const)(
       fake = h.chain as FakeChain;
     });
     afterEach(async () => {
-      await h.close();
+      await (h as ChainHarness | undefined)?.close();
     });
 
     const input = (depositId: string): PledgeInput => ({

@@ -152,8 +152,8 @@ describe('NearChainClient (test/chain/near/client.test.ts)', () => {
   });
 
   afterAll(async () => {
-    await pool.end();
-    await db.drop();
+    await (pool as pg.Pool | undefined)?.end();
+    await (db as TestDatabase | undefined)?.drop();
   });
 
   beforeEach(() => {

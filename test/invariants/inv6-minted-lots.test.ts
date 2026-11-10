@@ -29,7 +29,7 @@ describe.each(['stellar', 'near'] as const)(
       });
     });
   afterEach(async () => {
-    await h.close();
+    await (h as ChainHarness | undefined)?.close();
   });
 
   it('never dispatches a minted lot off-chain (DispatchService, lot trigger)', async () => {

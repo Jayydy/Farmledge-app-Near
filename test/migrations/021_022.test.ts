@@ -27,8 +27,8 @@ describe('migrations 021 & 022 (NEAR backend)', () => {
     });
 
     afterAll(async () => {
-      await client.end();
-      await db.drop();
+      await (client as pg.Client | undefined)?.end();
+      await (db as TestDatabase | undefined)?.drop();
     });
 
     const up = (count?: number) =>
@@ -126,8 +126,8 @@ describe('migrations 021 & 022 (NEAR backend)', () => {
     });
 
     afterAll(async () => {
-      await client.end();
-      await db.drop();
+      await (client as pg.Client | undefined)?.end();
+      await (db as TestDatabase | undefined)?.drop();
     });
 
     beforeEach(async () => {
@@ -137,7 +137,7 @@ describe('migrations 021 & 022 (NEAR backend)', () => {
     });
 
     afterEach(async () => {
-      await client.query('ROLLBACK');
+      await (client as pg.Client | undefined)?.query('ROLLBACK');
     });
 
     async function failure(sql: string, params: unknown[] = []): Promise<pg.DatabaseError> {

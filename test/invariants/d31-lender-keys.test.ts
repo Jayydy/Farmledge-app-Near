@@ -38,7 +38,7 @@ describe('D31 no code path signs for a lender', () => {
     fake = h.chain as FakeChain;
   });
   afterEach(async () => {
-    await h.close();
+    await (h as ChainHarness | undefined)?.close();
   });
 
   it('the key service holds no lender key: it refuses any subject that is not ours', async () => {

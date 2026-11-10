@@ -41,7 +41,7 @@ describe('INV-9 keep-alive', () => {
   });
   const sentIds = () => fake.ttlBatches.flat().map(String);
   afterEach(async () => {
-    await h.close();
+    await (h as ChainHarness | undefined)?.close();
   });
 
   it('sends only Active, Locked and Recovery receipts, never Exited or Revoked, 25 at most per call', async () => {
